@@ -1,0 +1,12 @@
+.venv/
+.pgdata/
+.tools/
+.chrome-profile/
+.tmp/
+.npm-cache/
+node_modules/
+web/dist/
+__pycache__/
+*.py[cod]
+.env
+.DS_Store

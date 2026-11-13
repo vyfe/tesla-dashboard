@@ -1,0 +1,14 @@
+.git
+.venv
+.pgdata
+.tools
+.chrome-profile
+.tmp
+.npm-cache
+node_modules
+web/node_modules
+web/dist
+design
+__pycache__
+*.pyc
+.env

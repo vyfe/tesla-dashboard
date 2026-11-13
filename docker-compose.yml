@@ -1,0 +1,33 @@
+services:
+  dashboard:
+    build: .
+    image: tesla-dashboard:local
+    container_name: tesla-dashboard
+    restart: unless-stopped
+    env_file: .env
+    ports:
+      - "4001:8000"
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8000/api/health', timeout=4).status == 200 else 1)"
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+
+    # 如果 TeslaMate 和这个服务在「同一个 compose 项目」里，直接删掉下面三行，
+    # 它们会自动共享同一个 network，DATABASE_URL 里写 database 就能连通。
+    # networks:
+    #   - teslamate_default
+    #
+    # 如果是两个独立的 compose 项目，用外部网络：
+    # networks:
+    #   - teslamate_net
+    #
+    # networks:
+    #   teslamate_net:
+    #     external: true
+    #     name: teslamate_default

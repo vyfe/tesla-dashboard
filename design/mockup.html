@@ -1,0 +1,259 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>TeslaMate 自定义看板 · 设计稿</title>
+<style>
+  :root{
+    color-scheme: dark;
+    --bg:#0a0d12; --panel:#11161d; --panel-2:#0e1319;
+    --line:#1e2631; --line-soft:#171e27;
+    --text:#e6edf3; --muted:#8b949e; --dim:#5c6672;
+    --accent:#e82127; --accent-soft:#ff5b60;
+    --green:#3fb950; --blue:#58a6ff; --amber:#d29922;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0}
+  body{
+    background:
+      radial-gradient(1200px 600px at 15% -10%, #16202b 0%, transparent 60%),
+      var(--bg);
+    color:var(--text);
+    font:14px/1.55 -apple-system,BlinkMacSystemFont,"PingFang SC","Helvetica Neue",Arial,sans-serif;
+    -webkit-font-smoothing:antialiased;
+  }
+  .wrap{max-width:1180px;margin:0 auto;padding:28px 26px 60px}
+
+  /* ---------- 顶栏 ---------- */
+  .top{display:flex;align-items:center;gap:16px;margin-bottom:24px}
+  .brand{display:flex;align-items:center;gap:10px;font-weight:600;letter-spacing:.02em}
+  .dot{width:8px;height:8px;border-radius:50%;background:var(--green);box-shadow:0 0 0 4px rgba(63,185,80,.14)}
+  .car{color:var(--muted);font-weight:400;font-size:13px}
+  .tabs{margin-left:auto;display:flex;gap:4px;background:var(--panel-2);border:1px solid var(--line);
+        border-radius:10px;padding:4px}
+  .tabs span{padding:6px 14px;border-radius:7px;color:var(--muted);font-size:13px;cursor:default}
+  .tabs .on{background:#1b232d;color:var(--text);box-shadow:inset 0 0 0 1px #26313d}
+
+  /* ---------- KPI ---------- */
+  .kpis{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-bottom:14px}
+  .kpi{background:linear-gradient(180deg,#121820,#0f141a);border:1px solid var(--line);
+       border-radius:13px;padding:15px 16px 14px}
+  .kpi .k{color:var(--dim);font-size:11px;letter-spacing:.09em;text-transform:uppercase}
+  .kpi .v{font-size:27px;font-weight:600;line-height:1.25;margin-top:5px;
+          font-variant-numeric:tabular-nums;letter-spacing:-.01em}
+  .kpi .v small{font-size:13px;color:var(--muted);font-weight:400;margin-left:3px;letter-spacing:0}
+  .kpi .d{font-size:12px;color:var(--muted);margin-top:3px}
+  .up{color:var(--green)} .down{color:var(--accent-soft)}
+
+  /* ---------- 布局 ---------- */
+  .grid{display:grid;grid-template-columns:1.55fr 1fr;gap:14px;align-items:start}
+  .panel{background:var(--panel);border:1px solid var(--line);border-radius:14px;overflow:hidden}
+  .panel + .panel{margin-top:14px}
+  .ph{display:flex;align-items:center;gap:10px;padding:14px 16px;border-bottom:1px solid var(--line-soft)}
+  .ph h2{margin:0;font-size:13px;font-weight:600;letter-spacing:.01em}
+  .ph .hint{color:var(--dim);font-size:11px;margin-left:auto}
+
+  /* ---------- 行程表 ---------- */
+  table{width:100%;border-collapse:collapse}
+  th{font-size:11px;color:var(--dim);text-align:left;font-weight:500;
+     letter-spacing:.06em;text-transform:uppercase;padding:9px 16px;border-bottom:1px solid var(--line-soft)}
+  td{padding:11px 16px;border-bottom:1px solid #131a22;font-size:13px;vertical-align:middle}
+  tr:last-child td{border-bottom:none}
+  tr:hover td{background:#0f151c}
+  .route{display:flex;align-items:center;gap:8px;min-width:0}
+  .route b{font-weight:500;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:132px}
+  .arrow{color:var(--dim);flex:none;font-size:11px}
+  .num{font-variant-numeric:tabular-nums;text-align:right;white-space:nowrap}
+  .tag{display:inline-block;padding:1px 7px;border-radius:99px;font-size:11px;line-height:18px;
+       background:#18212b;color:var(--muted);border:1px solid #202a35}
+  .tag.work{color:#79c0ff;border-color:#1d3a58;background:#10202e}
+  .tag.home{color:#7ee787;border-color:#1d4028;background:#0f2016}
+  .bar{height:4px;border-radius:2px;background:#1b232d;overflow:hidden;margin-top:5px}
+  .bar i{display:block;height:100%;background:linear-gradient(90deg,var(--accent),#ff7a45);border-radius:2px}
+
+  /* ---------- 电池 ---------- */
+  .battery{padding:16px}
+  .big{display:flex;align-items:baseline;gap:8px}
+  .big b{font-size:34px;font-weight:600;font-variant-numeric:tabular-nums;letter-spacing:-.02em}
+  .big span{color:var(--muted);font-size:13px}
+  .legend{display:flex;gap:14px;margin:10px 0 2px;font-size:11px;color:var(--dim)}
+  .legend i{display:inline-block;width:14px;height:2px;vertical-align:middle;margin-right:5px;border-radius:1px}
+  .axis{display:flex;justify-content:space-between;color:var(--dim);font-size:10px;margin-top:4px;padding:0 2px}
+
+  /* ---------- 充电记录 ---------- */
+  .chg{padding:4px 0}
+  .row{display:flex;align-items:center;gap:10px;padding:10px 16px;border-bottom:1px solid #131a22;font-size:13px}
+  .row:last-child{border-bottom:none}
+  .row .when{color:var(--muted);font-size:12px;width:74px;flex:none}
+  .row .kwh{margin-left:auto;font-variant-numeric:tabular-nums;font-weight:500}
+  .row .type{font-size:11px;color:var(--dim);width:44px;text-align:right;flex:none}
+  .pill{width:6px;height:26px;border-radius:3px;background:#1b232d;flex:none;position:relative;overflow:hidden}
+  .pill i{position:absolute;bottom:0;left:0;right:0;background:var(--green);border-radius:3px}
+
+  footer{color:#3d4550;font-size:11px;margin-top:26px;text-align:center}
+  @media (max-width:900px){.grid{grid-template-columns:1fr}.kpis{grid-template-columns:repeat(2,1fr)}}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <div class="top">
+    <div class="brand"><span class="dot"></span> 大白 <span class="car">Model 3 LR · 京A·D2***8</span></div>
+    <div class="tabs"><span class="on">总览</span><span>行程</span><span>电池</span><span>充电</span></div>
+  </div>
+
+  <div class="kpis">
+    <div class="kpi">
+      <div class="k">本月里程</div>
+      <div class="v">1,284<small>km</small></div>
+      <div class="d"><span class="up">↑ 12%</span> 对比上月</div>
+    </div>
+    <div class="kpi">
+      <div class="k">行程数</div>
+      <div class="v">63<small>次</small></div>
+      <div class="d">平均 20.4 km / 次</div>
+    </div>
+    <div class="kpi">
+      <div class="k">平均电耗</div>
+      <div class="v">14.2<small>kWh/100km</small></div>
+      <div class="d"><span class="down">↑ 0.6</span> 冬季偏高</div>
+    </div>
+    <div class="kpi">
+      <div class="k">电池健康</div>
+      <div class="v">94.1<small>%</small></div>
+      <div class="d">估算容量 71.2 kWh</div>
+    </div>
+  </div>
+
+  <div class="grid">
+
+    <!-- 左：行程 -->
+    <div>
+      <div class="panel">
+        <div class="ph"><h2>最近行程</h2><span class="hint">按日聚合 · 点击展开速度/功率曲线</span></div>
+        <table>
+          <thead><tr>
+            <th>路线</th><th class="num">距离</th><th class="num">时长</th><th class="num">电耗</th><th class="num">均速</th>
+          </tr></thead>
+          <tbody>
+            <tr>
+              <td><div class="route"><b>望京 SOHO</b><span class="arrow">→</span><b>家</b>
+                <span class="tag home">家</span></div>
+                <div class="bar"><i style="width:62%"></i></div></td>
+              <td class="num">18.4 km</td><td class="num">32 min</td>
+              <td class="num">2.7 kWh</td><td class="num">34 km/h</td>
+            </tr>
+            <tr>
+              <td><div class="route"><b>家</b><span class="arrow">→</span><b>望京 SOHO</b>
+                <span class="tag work">公司</span></div>
+                <div class="bar"><i style="width:58%"></i></div></td>
+              <td class="num">17.6 km</td><td class="num">41 min</td>
+              <td class="num">2.9 kWh</td><td class="num">26 km/h</td>
+            </tr>
+            <tr>
+              <td><div class="route"><b>望京 SOHO</b><span class="arrow">→</span><b>首都机场 T3</b></div>
+                <div class="bar"><i style="width:95%"></i></div></td>
+              <td class="num">28.9 km</td><td class="num">35 min</td>
+              <td class="num">4.4 kWh</td><td class="num">50 km/h</td>
+            </tr>
+            <tr>
+              <td><div class="route"><b>首都机场 T3</b><span class="arrow">→</span><b>家</b>
+                <span class="tag home">家</span></div>
+                <div class="bar"><i style="width:90%"></i></div></td>
+              <td class="num">27.2 km</td><td class="num">38 min</td>
+              <td class="num">3.9 kWh</td><td class="num">43 km/h</td>
+            </tr>
+            <tr>
+              <td><div class="route"><b>家</b><span class="arrow">→</span><b>三里屯太古里</b></div>
+                <div class="bar"><i style="width:28%"></i></div></td>
+              <td class="num">8.6 km</td><td class="num">24 min</td>
+              <td class="num">1.5 kWh</td><td class="num">22 km/h</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
+      <div class="panel">
+        <div class="ph"><h2>近 30 天日均里程</h2><span class="hint">单位 km</span></div>
+        <div style="padding:14px 16px 8px">
+          <svg viewBox="0 0 640 120" preserveAspectRatio="none" style="width:100%;height:120px;display:block">
+            <defs><linearGradient id="g2" x1="0" y1="0" x2="0" y2="1">
+              <stop offset="0%" stop-color="#e82127" stop-opacity=".30"/>
+              <stop offset="100%" stop-color="#e82127" stop-opacity="0"/>
+            </linearGradient></defs>
+            <g stroke="#1a222c" stroke-width="1">
+              <line x1="0" y1="30" x2="640" y2="30"/><line x1="0" y1="60" x2="640" y2="60"/>
+              <line x1="0" y1="90" x2="640" y2="90"/>
+            </g>
+            <polygon fill="url(#g2)" points="
+              0,120 0,74 22,66 44,88 66,70 88,52 110,60 132,96 154,80 176,58 198,64 220,44
+              242,52 264,72 286,60 308,38 330,50 352,84 374,66 396,48 418,56 440,30 462,42
+              484,62 506,50 528,34 550,46 572,74 594,58 616,44 640,36 640,120"/>
+            <polyline fill="none" stroke="#e82127" stroke-width="2" vector-effect="non-scaling-stroke"
+              stroke-linejoin="round" points="
+              0,74 22,66 44,88 66,70 88,52 110,60 132,96 154,80 176,58 198,64 220,44
+              242,52 264,72 286,60 308,38 330,50 352,84 374,66 396,48 418,56 440,30 462,42
+              484,62 506,50 528,34 550,46 572,74 594,58 616,44 640,36"/>
+          </svg>
+          <div class="axis"><span>10-15</span><span>10-22</span><span>10-29</span><span>11-05</span><span>11-13</span></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- 右：电池 + 充电 -->
+    <div>
+      <div class="panel">
+        <div class="ph"><h2>电池衰减</h2><span class="hint">估算，按月取中位数</span></div>
+        <div class="battery">
+          <div class="big"><b>94.1%</b><span>相对出厂 75.6 kWh</span></div>
+          <div class="legend">
+            <span><i style="background:#58a6ff"></i>估算容量</span>
+            <span><i style="background:#30363d"></i>出厂标称</span>
+          </div>
+          <svg viewBox="0 0 380 130" preserveAspectRatio="none" style="width:100%;height:130px;display:block;margin-top:6px">
+            <line x1="0" y1="18" x2="380" y2="18" stroke="#30363d" stroke-dasharray="4 4" stroke-width="1"/>
+            <defs><linearGradient id="g3" x1="0" y1="0" x2="0" y2="1">
+              <stop offset="0%" stop-color="#58a6ff" stop-opacity=".28"/>
+              <stop offset="100%" stop-color="#58a6ff" stop-opacity="0"/>
+            </linearGradient></defs>
+            <polygon fill="url(#g3)" points="
+              0,130 0,42 54,48 108,55 162,58 216,62 270,66 324,69 380,72 380,130"/>
+            <polyline fill="none" stroke="#58a6ff" stroke-width="2" vector-effect="non-scaling-stroke"
+              points="0,42 54,48 108,55 162,58 216,62 270,66 324,69 380,72"/>
+            <circle cx="380" cy="72" r="3.5" fill="#58a6ff"/>
+          </svg>
+          <div class="axis"><span>2024-06</span><span>2025-03</span><span>2026-01</span><span>2026-11</span></div>
+          <div style="margin-top:14px;padding-top:12px;border-top:1px solid #171e27;
+                      display:flex;justify-content:space-between;font-size:12px;color:var(--muted)">
+            <span>近 90 天衰减 <b style="color:var(--text)">0.4%</b></span>
+            <span>健康充电占比 <b style="color:var(--text)">86%</b></span>
+          </div>
+        </div>
+      </div>
+
+      <div class="panel">
+        <div class="ph"><h2>最近充电</h2><span class="hint">kWh</span></div>
+        <div class="chg">
+          <div class="row"><span class="pill"><i style="height:70%;background:#3fb950"></i></span>
+            <span class="when">11-13 22:10</span><span>家 · 交流</span>
+            <span class="kwh">18.4</span><span class="type">32A</span></div>
+          <div class="row"><span class="pill"><i style="height:46%;background:#d29922"></i></span>
+            <span class="when">11-10 14:32</span><span>望京 · 超充</span>
+            <span class="kwh">32.1</span><span class="type">120kW</span></div>
+          <div class="row"><span class="pill"><i style="height:88%;background:#3fb950"></i></span>
+            <span class="when">11-06 23:04</span><span>家 · 交流</span>
+            <span class="kwh">24.6</span><span class="type">32A</span></div>
+          <div class="row"><span class="pill"><i style="height:38%;background:#d29922"></i></span>
+            <span class="when">11-02 09:18</span><span>首都机场 · 超充</span>
+            <span class="kwh">21.7</span><span class="type">90kW</span></div>
+        </div>
+      </div>
+    </div>
+
+  </div>
+
+  <footer>TeslaMate 只读旁路服务 · 数据全部来自你现有的 PostgreSQL</footer>
+</div>
+</body>
+</html>
