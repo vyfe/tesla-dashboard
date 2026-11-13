@@ -2,13 +2,16 @@
 
 from __future__ import annotations
 
+import base64
+import hmac
+import logging
 import os
 from datetime import date, datetime, timezone
 from decimal import Decimal
 from pathlib import Path
 from typing import Any
 
-from fastapi import FastAPI, HTTPException, Query
+from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
@@ -20,14 +23,79 @@ NOMINAL_KWH = float(os.environ.get("NOMINAL_KWH", "75.0"))
 TZ_OFFSET_HOURS = int(os.environ.get("TZ_OFFSET_HOURS", "8"))
 DEFAULT_CAR = os.environ.get("DEFAULT_CAR_ID")
 STATIC_DIR = Path(os.environ.get("STATIC_DIR", Path(__file__).resolve().parent.parent / "web" / "dist"))
+_STATIC_ROOT = STATIC_DIR.resolve()
 
-app = FastAPI(title="TeslaMate Dashboard", docs_url="/api/docs", openapi_url="/api/openapi.json")
+# 生产默认不暴露 OpenAPI；本地调试显式 ENABLE_DOCS=1。
+ENABLE_DOCS = os.environ.get("ENABLE_DOCS", "0").lower() in {"1", "true", "yes", "on"}
+# HTTP Basic 登录：两个都填才生效，留空则完全依赖内网 / 反向代理。
+AUTH_USER = os.environ.get("DASHBOARD_USER", "")
+AUTH_PASSWORD = os.environ.get("DASHBOARD_PASSWORD", "")
+AUTH_ENABLED = bool(AUTH_USER and AUTH_PASSWORD)
+# 健康检查给容器探针用，不含任何业务数据或版本信息。
+PUBLIC_PATHS = frozenset({"/api/health"})
+
+if bool(AUTH_USER) != bool(AUTH_PASSWORD):
+    logging.getLogger("teslamate.dashboard").warning(
+        "DASHBOARD_USER 与 DASHBOARD_PASSWORD 只配了一个，登录未启用——看板当前是公开的"
+    )
+
+app = FastAPI(
+    title="TeslaMate Dashboard",
+    docs_url="/api/docs" if ENABLE_DOCS else None,
+    redoc_url=None,
+    openapi_url="/api/openapi.json" if ENABLE_DOCS else None,
+)
+
+
+def _basic_auth_ok(header: str | None, user: str, password: str) -> bool:
+    """校验 HTTP Basic 头；用户名和密码都用常量时间比较，避免时序侧信道。"""
+    if not header:
+        return False
+    scheme, _, token = header.partition(" ")
+    if scheme.lower() != "basic" or not token:
+        return False
+    try:
+        decoded = base64.b64decode(token.strip(), validate=True).decode("utf-8")
+    except (ValueError, UnicodeDecodeError):
+        return False
+    username, sep, given = decoded.partition(":")
+    if not sep:
+        return False
+    # compare_digest 只接受 ASCII，先转 bytes 才能支持中文密码。
+    return hmac.compare_digest(username.encode("utf-8"), user.encode("utf-8")) and hmac.compare_digest(
+        given.encode("utf-8"), password.encode("utf-8")
+    )
+
+
+@app.middleware("http")
+async def guard(request: Request, call_next):
+    """鉴权 + 安全响应头。放在 CORS 之内，CORS 仍然是最外层。"""
+    path = request.url.path
+    if (
+        AUTH_ENABLED
+        and request.method != "OPTIONS"
+        and path not in PUBLIC_PATHS
+        and not _basic_auth_ok(request.headers.get("authorization"), AUTH_USER, AUTH_PASSWORD)
+    ):
+        return JSONResponse(
+            {"detail": "需要登录"},
+            status_code=401,
+            headers={"WWW-Authenticate": 'Basic realm="tesla-dashboard", charset="UTF-8"'},
+        )
+
+    response = await call_next(request)
+    response.headers.setdefault("X-Content-Type-Options", "nosniff")
+    response.headers.setdefault("X-Frame-Options", "DENY")
+    response.headers.setdefault("Referrer-Policy", "no-referrer")
+    response.headers.setdefault("Permissions-Policy", "geolocation=(), camera=(), microphone=()")
+    return response
+
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=os.environ.get(
+    allow_origins=[o.strip() for o in os.environ.get(
         "CORS_ORIGINS", "http://localhost:5173,http://127.0.0.1:5173"
-    ).split(","),
+    ).split(",") if o.strip()],
     allow_methods=["GET"],
     allow_headers=["*"],
 )
@@ -141,8 +209,9 @@ def _shape_charge(row: dict) -> dict:
 
 @app.get("/api/health")
 def health() -> dict:
-    info = db.ping()
-    return {"ok": True, "database": info.get("db"), "server": info.get("version", "")[:40]}
+    # 探针只关心数据库是否可达；不回显库名、版本，避免白送指纹。
+    db.ping()
+    return {"ok": True}
 
 
 @app.get("/api/meta")
@@ -315,6 +384,16 @@ def charges(
 # ------------------------------------------------------------------ 静态资源
 
 
+def _static_file(full_path: str) -> Path | None:
+    """只允许命中 STATIC_DIR 内部的文件，挡住 ../ 与绝对路径穿越。"""
+    if not full_path:
+        return None
+    candidate = (_STATIC_ROOT / full_path).resolve()
+    if not candidate.is_relative_to(_STATIC_ROOT):
+        return None
+    return candidate if candidate.is_file() else None
+
+
 if STATIC_DIR.exists():
     app.mount("/assets", StaticFiles(directory=STATIC_DIR / "assets"), name="assets")
 
@@ -322,8 +401,8 @@ if STATIC_DIR.exists():
     def spa(full_path: str) -> Any:
         if full_path.startswith("api/"):
             return JSONResponse({"detail": "Not Found"}, status_code=404)
-        candidate = STATIC_DIR / full_path
-        if full_path and candidate.is_file():
+        candidate = _static_file(full_path)
+        if candidate is not None:
             return FileResponse(candidate)
         index = STATIC_DIR / "index.html"
         if index.exists():

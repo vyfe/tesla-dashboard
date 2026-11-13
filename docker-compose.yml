@@ -6,7 +6,11 @@ services:
     restart: unless-stopped
     env_file: .env
     ports:
-      - "4001:8000"
+      # 默认只绑本机回环：外网必须经过反代 / SSH 隧道，避免裸奔。
+      # 确需局域网直连时在 .env 里设 DASHBOARD_BIND=0.0.0.0（前提是已配 DASHBOARD_USER/PASSWORD）。
+      - "${DASHBOARD_BIND:-127.0.0.1}:4001:8000"
+    security_opt:
+      - no-new-privileges:true
     healthcheck:
       test:
         - CMD
