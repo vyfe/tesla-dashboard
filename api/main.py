@@ -6,7 +6,7 @@ import base64
 import hmac
 import logging
 import os
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
 from pathlib import Path
 from typing import Any
@@ -33,6 +33,14 @@ AUTH_PASSWORD = os.environ.get("DASHBOARD_PASSWORD", "")
 AUTH_ENABLED = bool(AUTH_USER and AUTH_PASSWORD)
 # 健康检查给容器探针用，不含任何业务数据或版本信息。
 PUBLIC_PATHS = frozenset({"/api/health"})
+
+# 对外分享的 demo 入口：不需要登录，只有界面，数据全是生成的假数据。
+# 默认关闭——打开前请确认 /demo 下的产物确实是 mock 构建。
+DEMO_ENABLED = os.environ.get("DEMO_ENABLED", "0").lower() in {"1", "true", "yes", "on"}
+DEMO_PREFIX = "/demo"
+DEMO_STATIC_DIR = Path(
+    os.environ.get("DEMO_STATIC_DIR", Path(__file__).resolve().parent.parent / "web" / "dist-demo")
+)
 
 if bool(AUTH_USER) != bool(AUTH_PASSWORD):
     logging.getLogger("teslamate.dashboard").warning(
@@ -67,6 +75,15 @@ def _basic_auth_ok(header: str | None, user: str, password: str) -> bool:
     )
 
 
+def _is_demo_path(path: str) -> bool:
+    """demo 前缀下的静态资源不需要登录。
+
+    只认 /demo 本身和 /demo/ 开头的路径——/api/* 永远要鉴权，
+    否则就等于把真实数据也放开了。
+    """
+    return DEMO_ENABLED and (path == DEMO_PREFIX or path.startswith(DEMO_PREFIX + "/"))
+
+
 @app.middleware("http")
 async def guard(request: Request, call_next):
     """鉴权 + 安全响应头。放在 CORS 之内，CORS 仍然是最外层。"""
@@ -75,6 +92,7 @@ async def guard(request: Request, call_next):
         AUTH_ENABLED
         and request.method != "OPTIONS"
         and path not in PUBLIC_PATHS
+        and not _is_demo_path(path)
         and not _basic_auth_ok(request.headers.get("authorization"), AUTH_USER, AUTH_PASSWORD)
     ):
         return JSONResponse(
@@ -175,6 +193,7 @@ def _shape_drive(row: dict, kwh_per_km: float | None) -> dict:
         "avg_speed": round(distance / duration * 60, 1) if distance and duration else None,
         "max_speed": row.get("speed_max"),
         "energy_kwh": energy,
+        "consumption": round(energy / distance * 100, 1) if energy and distance else None,
         "from": _place(row.get("start_geofence"), row.get("start_address")),
         "to": _place(row.get("end_geofence"), row.get("end_address")),
         "from_raw": row.get("start_address"),
@@ -187,6 +206,7 @@ def _shape_drive(row: dict, kwh_per_km: float | None) -> dict:
 
 def _shape_charge(row: dict) -> dict:
     kwh = _num(row.get("charge_energy_added"), 2)
+    used = _num(row.get("charge_energy_used"), 2)
     duration = row.get("duration_min") or 0
     power = round(kwh / (duration / 60), 1) if kwh and duration else None
     return {
@@ -194,6 +214,8 @@ def _shape_charge(row: dict) -> dict:
         "started_at": _iso(row.get("start_date")),
         "ended_at": _iso(row.get("end_date")),
         "kwh": kwh,
+        "used_kwh": used,
+        "efficiency": round(kwh / used * 100, 1) if kwh and used else None,
         "duration_min": duration,
         "power": power,
         "is_fast": (power or 0) > 15,
@@ -236,6 +258,93 @@ def meta() -> dict:
     )
 
 
+@app.get("/api/status")
+def status(car: int | None = None) -> dict:
+    """车辆最近一次上报的状态，用于首屏「现在怎么样」。
+
+    数据来自 TeslaMate 存下来的 positions，不直连特斯拉 API，
+    所以会有几十秒到几分钟的延迟，页面上如实标注更新时间。
+    """
+    vehicle = _resolve_car(car)
+    position = queries.latest_position(vehicle["id"])
+    charging = queries.active_charge(vehicle["id"]) is not None
+    if not position:
+        return {
+            "car_id": vehicle["id"],
+            "available": False,
+            "soc": None,
+            "range_km": None,
+            "odometer_km": None,
+            "updated_at": None,
+            "age_min": None,
+            "charging": charging,
+        }
+
+    updated = position.get("date")
+    age_min = None
+    if isinstance(updated, datetime):
+        if updated.tzinfo is None:
+            updated = updated.replace(tzinfo=timezone.utc)
+        age_min = max(0, int((datetime.now(timezone.utc) - updated).total_seconds() // 60))
+
+    return _clean(
+        {
+            "car_id": vehicle["id"],
+            "available": True,
+            "soc": position.get("battery_level"),
+            "usable_soc": position.get("usable_battery_level"),
+            "range_km": _num(position.get("rated_battery_range_km"), 0),
+            "odometer_km": _num(position.get("odometer"), 0),
+            "updated_at": _iso(updated),
+            "age_min": age_min,
+            "charging": charging,
+        }
+    )
+
+
+@app.get("/api/timeline")
+def timeline(car: int | None = None, days: int = Query(7, ge=1, le=30)) -> dict:
+    """最近 N 天的行驶 / 充电 / 车辆状态区间，前端画成时间带。"""
+    vehicle = _resolve_car(car)
+    until = datetime.now(timezone.utc)
+    since = until - timedelta(days=days)
+    states = queries.state_intervals(vehicle["id"], since)
+    return _clean(
+        {
+            "days": days,
+            "since": _iso(since),
+            "until": _iso(until),
+            "drives": [
+                {
+                    "start": _iso(row.get("start_date")),
+                    "end": _iso(row.get("end_date")),
+                    "distance_km": _num(row.get("distance")),
+                }
+                for row in queries.drive_intervals(vehicle["id"], since)
+            ],
+            "charges": [
+                {
+                    "start": _iso(row.get("start_date")),
+                    "end": _iso(row.get("end_date")),
+                    "kwh": _num(row.get("charge_energy_added")),
+                }
+                for row in queries.charge_intervals(vehicle["id"], since)
+            ],
+            "states": None
+            if states is None
+            else [
+                {
+                    "state": row.get("state"),
+                    "start": _iso(row.get("start_date")),
+                    "end": _iso(row.get("end_date")),
+                }
+                for row in states
+            ],
+            "states_available": states is not None,
+        }
+    )
+
+
 @app.get("/api/overview")
 def overview(car: int | None = None) -> dict:
     vehicle = _resolve_car(car)
@@ -248,6 +357,11 @@ def overview(car: int | None = None) -> dict:
     prev = queries.period_stats(vehicle["id"], 1, TZ_OFFSET_HOURS)
     km = _num(month.get("km")) or 0.0
     prev_km = _num(prev.get("km")) or 0.0
+
+    energy = queries.month_energy(vehicle["id"], months_back=0, offset_hours=TZ_OFFSET_HOURS)
+    charged = _num(energy.get("charged")) or 0.0
+    grid = _num(energy.get("used")) or 0.0
+    cost = _num(energy.get("cost")) or 0.0
 
     return _clean(
         {
@@ -267,7 +381,16 @@ def overview(car: int | None = None) -> dict:
                 "capacity_kwh": battery.get("capacity_kwh"),
                 "nominal_kwh": NOMINAL_KWH,
             },
-            "daily": queries.daily_distance(vehicle["id"], 30, TZ_OFFSET_HOURS),
+            "ledger": {
+                "charged_kwh": round(charged, 1),
+                "grid_kwh": round(grid, 1) if grid else None,
+                "consumed_kwh": round(km * kwh_per_km, 1) if kwh_per_km else None,
+                "cost": round(cost, 2),
+                "cost_per_kwh": round(cost / charged, 2) if charged else None,
+                "efficiency_pct": round(charged / grid * 100, 1) if charged and grid else None,
+                "sessions": int(energy.get("sessions") or 0),
+            },
+            "daily": queries.daily_distance(vehicle["id"], 45, TZ_OFFSET_HOURS),
             "recent_drives": [
                 _shape_drive(row, kwh_per_km)
                 for row in queries.drives(vehicle["id"], limit=8, offset=0)
@@ -323,6 +446,9 @@ def drive_detail(drive_id: int, car: int | None = None) -> dict:
                     "soc": p.get("battery_level"),
                     "elevation": p.get("elevation"),
                     "odometer": _num(p.get("odometer"), 2),
+                    # WGS-84 原始坐标，底图需要 GCJ-02 时由前端换算
+                    "lat": _num(p.get("latitude"), 6),
+                    "lng": _num(p.get("longitude"), 6),
                 }
                 for p in series
             ],
@@ -349,10 +475,14 @@ def charges(
     total_kwh = round(sum(i["kwh"] or 0 for i in items), 1)
     sessions = queries.charging_sessions(vehicle["id"])
     total_kwh_all = 0.0
+    total_used_all = 0.0
+    total_cost_all = 0.0
     fast_count = 0
     for session in sessions:
         added = float(session.get("charge_energy_added") or 0)
         total_kwh_all += added
+        total_used_all += float(session.get("charge_energy_used") or 0)
+        total_cost_all += float(session.get("cost") or 0)
         duration = session.get("duration_min") or 0
         if duration and added / (duration / 60) > 15:
             fast_count += 1
@@ -374,6 +504,9 @@ def charges(
             "items": items,
             "page_kwh": total_kwh,
             "total_kwh": round(total_kwh_all, 1),
+            "total_used_kwh": round(total_used_all, 1) if total_used_all else None,
+            "total_cost": round(total_cost_all, 2),
+            "efficiency_pct": round(total_kwh_all / total_used_all * 100, 1) if total_used_all else None,
             "avg_kwh": round(total_kwh_all / len(sessions), 1) if sessions else None,
             "fast_share": round(fast_count / len(sessions) * 100, 1) if sessions else None,
             "monthly": [monthly[key] for key in sorted(monthly)][-12:],
@@ -384,14 +517,57 @@ def charges(
 # ------------------------------------------------------------------ 静态资源
 
 
-def _static_file(full_path: str) -> Path | None:
-    """只允许命中 STATIC_DIR 内部的文件，挡住 ../ 与绝对路径穿越。"""
+def _static_file(full_path: str, root: Path | None = None) -> Path | None:
+    """只允许命中 root 内部的文件，挡住 ../ 与绝对路径穿越。
+
+    root 默认取主站的静态目录；demo 用自己的目录传进来。
+    """
+    base = (root or _STATIC_ROOT).resolve()
     if not full_path:
         return None
-    candidate = (_STATIC_ROOT / full_path).resolve()
-    if not candidate.is_relative_to(_STATIC_ROOT):
+    candidate = (base / full_path).resolve()
+    if not candidate.is_relative_to(base):
         return None
     return candidate if candidate.is_file() else None
+
+
+# demo 路由必须注册在下面的 SPA catch-all 之前，否则会被它抢走。
+if DEMO_ENABLED:
+    if DEMO_STATIC_DIR.exists():
+        _DEMO_ROOT = DEMO_STATIC_DIR.resolve()
+
+        if (_DEMO_ROOT / "assets").exists():
+            app.mount("/demo/assets", StaticFiles(directory=_DEMO_ROOT / "assets"), name="demo-assets")
+
+        @app.get(DEMO_PREFIX)
+        @app.get(DEMO_PREFIX + "/{full_path:path}")
+        def demo_spa(full_path: str = "") -> Any:
+            candidate = _static_file(full_path, _DEMO_ROOT)
+            if candidate is not None:
+                return FileResponse(candidate)
+            index = _DEMO_ROOT / "index.html"
+            if index.exists():
+                return FileResponse(index)
+            return JSONResponse(
+                {"detail": "demo 前端还没构建，先执行 npm run build:demo"}, status_code=404
+            )
+
+    else:
+
+        @app.get(DEMO_PREFIX)
+        @app.get(DEMO_PREFIX + "/{full_path:path}")
+        def demo_missing(full_path: str = "") -> Any:
+            return JSONResponse(
+                {"detail": "demo 前端还没构建，先执行 npm run build:demo"}, status_code=404
+            )
+
+else:
+
+    @app.get(DEMO_PREFIX)
+    @app.get(DEMO_PREFIX + "/{full_path:path}")
+    def demo_disabled(full_path: str = "") -> Any:
+        # 没开 DEMO_ENABLED 时明确 404，别让主站的 SPA 把 /demo 当成普通路径吞掉。
+        return JSONResponse({"detail": "demo 未启用"}, status_code=404)
 
 
 if STATIC_DIR.exists():
@@ -401,7 +577,7 @@ if STATIC_DIR.exists():
     def spa(full_path: str) -> Any:
         if full_path.startswith("api/"):
             return JSONResponse({"detail": "Not Found"}, status_code=404)
-        candidate = _static_file(full_path)
+        candidate = _static_file(full_path, _STATIC_ROOT)
         if candidate is not None:
             return FileResponse(candidate)
         index = STATIC_DIR / "index.html"

@@ -6,6 +6,8 @@ from datetime import date, datetime, timedelta, timezone
 from statistics import median
 from typing import Any
 
+from psycopg import errors as pg_errors
+
 from . import analytics, db
 
 DRIVE_COLUMNS = """
@@ -57,6 +59,34 @@ def data_range(car_id: int) -> dict:
         """,
         {"car": car_id},
     ) or {}
+
+
+def latest_position(car_id: int) -> dict | None:
+    """车辆最后一次上报的状态。TeslaMate 通常几十秒到几分钟一条。"""
+    return db.one(
+        """
+        SELECT date, battery_level, usable_battery_level,
+               rated_battery_range_km, odometer
+        FROM positions
+        WHERE car_id = %(car)s
+        ORDER BY date DESC
+        LIMIT 1
+        """,
+        {"car": car_id},
+    )
+
+
+def active_charge(car_id: int) -> dict | None:
+    """未结束的充电进程 = 正在充电。"""
+    return db.one(
+        """
+        SELECT 1 AS active
+        FROM charging_processes
+        WHERE car_id = %(car)s AND end_date IS NULL
+        LIMIT 1
+        """,
+        {"car": car_id},
+    )
 
 
 # ------------------------------------------------------------------ 行程
@@ -122,7 +152,8 @@ def drive(car_id: int, drive_id: int) -> dict | None:
 def drive_positions(drive_id: int, *, max_points: int = 400) -> list[dict]:
     rows = db.query(
         """
-        SELECT date, speed, power, battery_level, elevation, odometer, inside_temp, outside_temp
+        SELECT date, speed, power, battery_level, elevation, odometer, inside_temp, outside_temp,
+               latitude, longitude
         FROM positions
         WHERE drive_id = %(id)s
         ORDER BY date
@@ -184,6 +215,69 @@ def charges_count(car_id: int) -> int:
         {"car": car_id},
     )
     return int(row["n"]) if row else 0
+
+
+def month_energy(car_id: int, *, months_back: int = 0, offset_hours: int = 8) -> dict:
+    """某个月的充电账本：充入、从电网取用、电费，用于算充电效率。"""
+    start, end = _month_window(months_back, offset_hours)
+    row = db.one(
+        """
+        SELECT COALESCE(SUM(charge_energy_added), 0) AS charged,
+               COALESCE(SUM(charge_energy_used), 0)  AS used,
+               COALESCE(SUM(cost), 0)                AS cost,
+               COUNT(*)                              AS sessions
+        FROM charging_processes
+        WHERE car_id = %(car)s AND end_date IS NOT NULL
+          AND start_date >= %(start)s AND start_date < %(end)s
+        """,
+        {"car": car_id, "start": start, "end": end},
+    ) or {}
+    return row
+
+
+# ------------------------------------------------------------------ 时间线
+
+
+def drive_intervals(car_id: int, since: datetime) -> list[dict]:
+    return db.query(
+        """
+        SELECT start_date, end_date, distance
+        FROM drives
+        WHERE car_id = %(car)s AND start_date >= %(since)s AND end_date IS NOT NULL
+        ORDER BY start_date
+        """,
+        {"car": car_id, "since": since},
+    )
+
+
+def charge_intervals(car_id: int, since: datetime) -> list[dict]:
+    return db.query(
+        """
+        SELECT start_date, end_date, charge_energy_added
+        FROM charging_processes
+        WHERE car_id = %(car)s AND start_date >= %(since)s AND end_date IS NOT NULL
+        ORDER BY start_date
+        """,
+        {"car": car_id, "since": since},
+    )
+
+
+def state_intervals(car_id: int, since: datetime) -> list[dict] | None:
+    """车辆状态（在线/睡眠）。没授权或没这张表时返回 None，页面降级而不是报错。"""
+    try:
+        return db.query(
+            """
+            SELECT state, start_date, end_date
+            FROM states
+            WHERE car_id = %(car)s
+              AND start_date >= %(since)s
+              AND (end_date IS NULL OR end_date > %(since)s)
+            ORDER BY start_date
+            """,
+            {"car": car_id, "since": since},
+        )
+    except (pg_errors.InsufficientPrivilege, pg_errors.UndefinedTable):
+        return None
 
 
 # ------------------------------------------------------------------ 聚合

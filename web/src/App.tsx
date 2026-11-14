@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { api } from "./api";
+import { api, IS_DEMO } from "./api";
 import type { Meta } from "./types";
 import { Shell, type Tab } from "./components/Shell";
 import { ErrorBox, Loading } from "./components/Panel";
@@ -11,6 +11,7 @@ import { Charging } from "./pages/Charging";
 export default function App() {
   const [meta, setMeta] = useState<Meta | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [carId, setCarId] = useState<number | null>(null);
   const [tab, setTab] = useState<Tab>(() => {
     const hash = window.location.hash.replace("#", "");
     return (["overview", "drives", "battery", "charging"] as Tab[]).includes(hash as Tab)
@@ -26,14 +27,19 @@ export default function App() {
     let alive = true;
     api
       .meta()
-      .then((value) => alive && setMeta(value))
+      .then((value) => {
+        if (!alive) return;
+        setMeta(value);
+        setCarId(value.cars[0]?.id ?? null);
+      })
       .catch((err) => alive && setError(err.message ?? String(err)));
     return () => {
       alive = false;
     };
   }, []);
 
-  const car = meta?.cars[0] ?? null;
+  const car = meta?.cars.find((item) => item.id === carId) ?? meta?.cars[0] ?? null;
+  const tagline = meta?.demo_scenarios?.find((item) => item.id === car?.id)?.tagline;
 
   if (error) {
     return (
@@ -49,17 +55,24 @@ export default function App() {
   if (!meta) {
     return (
       <div className="mx-auto max-w-[1180px] px-6 py-20">
-        <Loading label="正在连接 TeslaMate 数据库…" />
+        <Loading label={IS_DEMO ? "正在生成示例数据…" : "正在连接 TeslaMate 数据库…"} />
       </div>
     );
   }
 
   return (
-    <Shell car={car} tab={tab} onTab={setTab}>
-      {tab === "overview" && <Overview carId={car?.id} onNavigate={setTab} />}
-      {tab === "drives" && <Drives carId={car?.id} />}
-      {tab === "battery" && <Battery carId={car?.id} />}
-      {tab === "charging" && <Charging carId={car?.id} />}
+    <Shell
+      car={car}
+      cars={meta.cars}
+      onSelectCar={setCarId}
+      tagline={tagline}
+      tab={tab}
+      onTab={setTab}
+    >
+      {tab === "overview" && <Overview key={car?.id} carId={car?.id} onNavigate={setTab} />}
+      {tab === "drives" && <Drives key={car?.id} carId={car?.id} />}
+      {tab === "battery" && <Battery key={car?.id} carId={car?.id} />}
+      {tab === "charging" && <Charging key={car?.id} carId={car?.id} />}
     </Shell>
   );
 }

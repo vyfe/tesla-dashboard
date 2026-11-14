@@ -2,6 +2,7 @@
 
 基于 **TeslaMate** 的自定义看板：只读旁路服务，专门看**行程、电池、充电**。
 不改 TeslaMate、不写库、不做车控（车控用官方 App 就好）。
+界面支持浅色 / 深色跟随系统，也可以手动切换。
 
 ![总览](design/shot-overview.png)
 
@@ -21,6 +22,10 @@
 
 ![充电](design/shot-charging.png)
 
+**浅色模式**
+
+![浅色总览](design/shot-overview-light.png)
+
 </details>
 
 ## 架构
@@ -32,7 +37,7 @@
                     TeslaMate 的 PostgreSQL  ◄── TeslaMate 本体照常读写，互不打扰
 ```
 
-前端 React + Tailwind + Recharts，`npm run build` 后由同一个 FastAPI 容器托管，
+前端 React + Tailwind + Recharts + Leaflet，`npm run build` 后由同一个 FastAPI 容器托管，
 生产环境只有一个容器、一个端口。浏览器只跟 `/api/*` 打交道，**没有任何前端直连数据库的路径**，
 连接串只存在于服务端环境变量里。
 
@@ -50,10 +55,15 @@ GRANT CONNECT ON DATABASE teslamate TO tesla_readonly;
 GRANT USAGE  ON SCHEMA public TO tesla_readonly;
 GRANT SELECT ON cars, drives, charging_processes, positions, addresses, geofences
              TO tesla_readonly;
+
+-- 近 7 天状态时间线需要；老版本没有这张表就跳过，页面会自动降级
+GRANT SELECT ON states TO tesla_readonly;
 ```
 
-> `positions` 是最大的表（百万行级），只用于「行程详情」的曲线。
-> 不需要曲线就把 `positions` 从授权里去掉，接口会返回空数组，页面降级为「没有轨迹采样点」。
+> `positions` 是最大的表（百万行级），用于「行程详情」曲线和顶部状态条。
+> 不需要这些就把 `positions` 从授权里去掉，接口会返回空数组，页面降级为「没有轨迹采样点」。
+> 状态条按 `car_id + date` 取最新一条，生产库确认有对应索引，没有会很慢：
+> `CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_positions_car_date ON positions (car_id, date DESC);`
 
 ### 2. 配置
 
@@ -85,6 +95,27 @@ docker compose logs -f dashboard
 > 默认只绑 `127.0.0.1`，从本机连服务器用 SSH 隧道：
 > `ssh -L 4001:127.0.0.1:4001 用户名@服务器`。
 > 局域网直连需在 `.env` 设 `DASHBOARD_BIND=0.0.0.0`，并确保已配登录密码。
+
+## 打包上传
+
+```bash
+./scripts/package.sh             # 源码包，输出到 release/
+./scripts/package.sh --with-dist # 连前端构建产物一起打包（服务器上可跳过 npm）
+./scripts/package.sh --verify    # 打包前跑一遍后端单元测试
+```
+
+脚本打包的是**当前工作区**（包含未提交改动），默认排除 `.env`、`node_modules`、`.venv`、`.pgdata`、`.chrome-profile`、`web/dist`。
+产物名带时间戳和 commit，有未提交改动时加 `-dirty`，同时生成 `.sha256`。
+
+上传并解压：
+
+```bash
+scp release/tesla-dashboard-*.tar.gz 用户@服务器:/opt/teslamate/
+ssh 用户@服务器 'cd /opt/teslamate && tar -xzf tesla-dashboard-*.tar.gz'
+```
+
+> 包里的根目录是 `tesla-dashboard/`，解压会原地覆盖同名文件；`.env` 不在包里，不会被覆盖。
+> 解压后照样执行 `docker compose up -d --build dashboard`。
 
 ## 接进现有的 TeslaMate compose
 
@@ -147,19 +178,69 @@ networks:
     name: teslamate_default
 ```
 
+## 界面
+
+- **顶部状态条**：最近一次上报的电量、剩余续航、总里程，每 60 秒刷新一次。数据来自 TeslaMate 的 `positions`，不直连特斯拉 API，所以会如实标注「x 分钟前」。
+- **本月能量账本**：充入 / 电费 / 充电效率 / 行驶耗电放在一起，充电损耗按 `充入 ÷ 电网取用` 算。
+- **里程日历**：近 5 周热力格，配「有行程天数 / 单日最多」。
+- **行程轨迹地图**：行程详情弹窗顶部是一张 Leaflet 地图，轨迹按速度分色（蓝→青→绿→黄→橙→红），点地图任意位置会弹出该时刻的速度 / 功率 / 电量 / 海拔。右上角可切换底图：高德路网 / 高德卫星 / 高德影像路网。
+- **近 7 天状态**：行驶（蓝）、充电（琥珀）、在线（灰）时间带；没授权 `states` 时只显示前两者。
+- **主题**：默认跟随系统，右上角按钮循环「自动 → 浅色 → 深色」，选择存在 localStorage；也可以用 `?theme=light` / `?theme=dark` 强制。
+
+### 轨迹地图的坐标系
+
+TeslaMate 的 `positions` 存的是 **WGS-84** 原始坐标，而高德底图用的是 **GCJ-02**，
+两者在北京一带差 500 米左右，直接叠加轨迹会整体偏出道路。
+`web/src/lib/gcj02.ts` 用国测局公开算法在浏览器本地换算（不依赖高德的 convert 服务，离线也能用），
+并且**只对 GCJ-02 底图生效**：`DriveMap.tsx` 里每个底图都带 `gcj02` 标记，
+高德三层为 `true`，换成 WGS-84 底图时用原始坐标。
+实测偏移量：北京 538 m、上海 481 m、境外坐标不偏移。
+
+> OpenStreetMap 和 CARTO 暗色底图曾作为可切换项，因国内访问不稳定已下线；
+> 需要时把条目加回 `BASEMAPS` 即可，坐标偏移逻辑无需改动。
+
 ## 接口一览
 
 | 路径 | 用途 |
 |---|---|
 | `GET /api/health` | 连通性检查（仅 `{"ok":true}`，不泄露库名/版本） |
 | `GET /api/meta` | 车辆列表、数据时间范围 |
-| `GET /api/overview?car=1` | 首页聚合：KPI、30 天里程、最近行程与充电 |
+| `GET /api/status?car=1` | 车辆最近一次上报：SOC、续航、总里程、是否在充电 |
+| `GET /api/timeline?car=1&days=7` | 近 N 天行驶 / 充电 / 在线状态区间 |
+| `GET /api/overview?car=1` | 首页聚合：能量账本、45 天里程、最近行程与充电 |
 | `GET /api/drives?car=1&limit=25&offset=0&date_from=2026-10-01` | 行程分页 |
-| `GET /api/drives/{id}` | 单次行程的速度 / 功率 / SOC 曲线 |
+| `GET /api/drives/{id}` | 单次行程的速度 / 功率 / SOC 曲线 + 轨迹经纬度 |
 | `GET /api/battery?car=1` | 容量估算、衰减趋势、SOC 分布 |
 | `GET /api/charges?car=1&limit=30&offset=0` | 充电记录 + 月度汇总 |
 
 OpenAPI 文档默认关闭，本地调试时 `ENABLE_DOCS=1` 再访问 `/api/docs`。
+
+## 对外分享：demo 入口
+
+`/demo` 是一个**不需要登录**的对外入口：只有界面，数据全是程序生成的假数据，
+用来给别人看样式、演示功能，不会碰到任何真实车辆信息。
+
+```bash
+cd web && npm run build:demo      # 产出 web/dist-demo（构建期开关，不进生产包）
+# .env 里打开
+echo 'DEMO_ENABLED=1' >> .env
+docker compose up -d --build
+# 访问 http://<你的域名>/demo
+```
+
+要点：
+
+- **默认关闭**。`DEMO_ENABLED=0`（默认）时 `/demo` 跟主站一样要登录，登录后返回 404「demo 未启用」；
+  没配鉴权时直接 404。必须显式打开。
+- **只豁免 `/demo` 前缀**。`/api/*` 永远要鉴权——demo 页面里不存在任何能读到真实数据的路径。
+- **mock 数据在构建期注入**。`VITE_DEMO=1` 时前端的数据源换成 `web/src/mock/`，一个网络请求都不发；
+  生产构建不设这个变量，整棵 mock 依赖会被 tree-shaking 掉，产物里不留任何假数据代码。
+- **只有样式，数据自洽**。三套可切换的场景（城市通勤 / 周末长途 / 北方冬天），
+  里程由起终点的地理距离反推，所以地图轨迹长度和列表里的里程永远对得上；
+  电量按天仿真，充入量与行驶耗电能在能量账本上对上。
+- **顶部有「示例数据」标识**，截图外传时不会被人当成真实数据。
+
+场景定义在 `web/src/mock/scenarios.ts`，数据生成在 `web/src/mock/generator.ts`。
 
 ## 安全设计
 
@@ -169,7 +250,7 @@ OpenAPI 文档默认关闭，本地调试时 `ENABLE_DOCS=1` 再访问 `/api/doc
 |---|---|
 | 数据库账号 | 只有 `SELECT`，并且角色级 `default_transaction_read_only=on`，写操作直接报错 |
 | 连接会话 | 每条连接强制 `default_transaction_read_only=on` + `statement_timeout`（默认 20s） |
-| API | 只有固定 7 个 GET 端点，SQL 全部参数绑定，不接受任意查询 |
+| API | 只有固定 9 个 GET 端点，SQL 全部参数绑定，不接受任意查询 |
 | 入口 | HTTP Basic 登录（`DASHBOARD_USER` / `DASHBOARD_PASSWORD`），常量时间比较；健康检查是唯一免登录路径，且只回 `{"ok":true}` |
 | 网络 | 容器默认只绑 `127.0.0.1`；生产 docs/openapi 关闭；SPA 静态文件做了目录逃逸校验；带 `nosniff` / `DENY` / `no-referrer` 等安全头 |
 
@@ -250,17 +331,22 @@ cd web && npm install && npm run dev
 
 ```
 api/            FastAPI：db.py 连接池 / queries.py 全部 SQL / analytics.py 电池估算
-web/            React + TS + Tailwind + Recharts
+web/            React + TS + Tailwind + Recharts + Leaflet
+web/src/mock/   demo 用的假数据：scenarios.ts 场景 / generator.ts 生成器
 sql/            本地开发的 schema 与合成数据生成器
 design/         设计稿与各页面截图
+scripts/        package.sh 打包脚本
 ```
 
 ## 已知限制
 
 - 按 **TeslaMate v2** 的 schema 编写；更老的版本字段可能对不上（`cars.efficiency` 等），
   报错时看 `queries.py` 里的列名，改起来是单点修改；
-- 只展示**第一辆车**（多车时可用 `DEFAULT_CAR_ID` 指定，切换 UI 还没做）；
+- 只展示**第一辆车**（多车时可用 `DEFAULT_CAR_ID` 指定，切换 UI 还没做；demo 模式下可以切场景）；
+- `/demo` 入口默认关闭，且**只提供静态产物**——它不读数据库，因此也不会跟着真实数据更新；
 - 时间戳按 UTC 存、按 `TZ_OFFSET_HOURS` 换算显示，跨时区出行（比如开车出境）不会自动切换；
+- 状态条是「TeslaMate 最后上报」而不是实时：延迟取决于 TeslaMate 的轮询间隔。直连特斯拉 Fleet API 需要 OAuth、刷新令牌和唤醒车辆，会打破只读旁路的定位，不建议塞进这个服务；
+- 近 7 天状态带需要 `states` 表授权；没有时只显示行驶和充电，页面会给出提示；
 - 登录只有一层 HTTP Basic，够内网看板用；要接公网请务必在反代上开 HTTPS，并按需加 IP 白名单 / VPN；
 - 这个仓库的接口与页面是用合成数据验证的，还没在你真实的 TeslaMate 库上跑过——
   第一次接入如果字段对不上，把报错发我，改起来很快。

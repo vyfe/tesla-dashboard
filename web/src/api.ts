@@ -1,3 +1,5 @@
+import type { DataSource } from "./datasource";
+import { mockApi } from "./mock";
 import type {
   Battery,
   ChargesPage,
@@ -5,6 +7,8 @@ import type {
   DriveDetail,
   Meta,
   Overview,
+  TimelineData,
+  VehicleStatus,
 } from "./types";
 
 const BASE = import.meta.env.VITE_API_BASE ?? "";
@@ -36,8 +40,11 @@ async function get<T>(path: string, params?: Record<string, string | number | un
   return (await response.json()) as T;
 }
 
-export const api = {
+/** 真实数据源：直连后端 /api/*。 */
+const httpApi: DataSource = {
   meta: () => get<Meta>("/api/meta"),
+  status: (car?: number) => get<VehicleStatus>("/api/status", { car }),
+  timeline: (car?: number, days = 7) => get<TimelineData>("/api/timeline", { car, days }),
   overview: (car?: number) => get<Overview>("/api/overview", { car }),
   drives: (params: { car?: number; limit?: number; offset?: number; date_from?: string }) =>
     get<DrivesPage>("/api/drives", params),
@@ -46,3 +53,16 @@ export const api = {
   charges: (params: { car?: number; limit?: number; offset?: number }) =>
     get<ChargesPage>("/api/charges", params),
 };
+
+/**
+ * 数据源在**构建期**决定，不在运行期判断。
+ *
+ * VITE_DEMO=1 时整棵 mock 依赖会被打进产物；不设置时这个三元表达式被折叠成 httpApi，
+ * mock 模块随之被 tree-shaking 掉——生产包里不会残留任何假数据代码。
+ */
+const isDemo = import.meta.env.VITE_DEMO === "1";
+
+export const api: DataSource = isDemo ? mockApi : httpApi;
+
+/** 当前是不是 demo 模式。页面据此显示「示例数据」标识。 */
+export const IS_DEMO = isDemo;

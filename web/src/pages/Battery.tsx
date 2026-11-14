@@ -15,34 +15,13 @@ import {
 import { api } from "../api";
 import type { Battery as BatteryData } from "../types";
 import { Empty, ErrorBox, Kpi, Loading, Panel } from "../components/Panel";
-import { AXIS_PROPS, GRID_PROPS, TooltipBox } from "../components/chart";
+import { TooltipBox, useChartTheme } from "../components/chart";
 import { monthLabel, n, niceScale, pct } from "../lib/format";
-
-function CapacityTooltip({ active, payload, label }: any) {
-  if (!active || !payload?.length) return null;
-  const point = payload[0]?.payload ?? {};
-  return (
-    <TooltipBox
-      label={`${label} · ${point.n} 个样本`}
-      rows={[{ name: "估算容量", value: n(point.kwh, 2), unit: "kWh", color: "#58a6ff" }]}
-    />
-  );
-}
-
-function RangeTooltip({ active, payload, label }: any) {
-  if (!active || !payload?.length) return null;
-  const point = payload[0]?.payload ?? {};
-  return (
-    <TooltipBox
-      label={`${label} · ${point.n} 个样本`}
-      rows={[{ name: "满电续航", value: n(point.value, 0), unit: "km", color: "#3fb950" }]}
-    />
-  );
-}
 
 export function Battery({ carId }: { carId?: number }) {
   const [data, setData] = useState<BatteryData | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const theme = useChartTheme();
 
   useEffect(() => {
     let alive = true;
@@ -86,17 +65,28 @@ export function Battery({ carId }: { carId?: number }) {
             <div className="h-[220px] px-2 pb-3 pt-4">
               <ResponsiveContainer width="100%" height="100%">
                 <LineChart data={capacity} margin={{ top: 6, right: 14, bottom: 0, left: 2 }}>
-                  <CartesianGrid {...GRID_PROPS} />
-                  <XAxis dataKey="label" minTickGap={26} {...AXIS_PROPS} />
-                  <YAxis width={48} domain={capacityScale.domain} ticks={capacityScale.ticks} allowDecimals={false} {...AXIS_PROPS} />
-                  <Tooltip content={<CapacityTooltip />} cursor={{ stroke: "#2a3644" }} />
+                  <CartesianGrid {...theme.gridProps} />
+                  <XAxis dataKey="label" minTickGap={26} {...theme.axisProps} />
+                  <YAxis width={44} domain={capacityScale.domain} ticks={capacityScale.ticks} allowDecimals={false} {...theme.axisProps} />
+                  <Tooltip
+                    cursor={theme.cursor}
+                    content={({ active, payload, label }: any) =>
+                      active && payload?.length ? (
+                        <TooltipBox
+                          label={`${label} · ${payload[0].payload.n} 个样本`}
+                          rows={[{ name: "估算容量", value: n(payload[0].payload.kwh, 2), unit: "kWh", color: theme.colors.info }]}
+                        />
+                      ) : null
+                    }
+                  />
                   <Line
                     type="monotone"
                     dataKey="kwh"
-                    stroke="#58a6ff"
+                    stroke={theme.colors.info}
                     strokeWidth={2}
-                    dot={{ r: 2.5, fill: "#58a6ff", strokeWidth: 0 }} isAnimationActive={false}
+                    dot={{ r: 2.5, fill: theme.colors.info, strokeWidth: 0 }}
                     activeDot={{ r: 4 }}
+                    isAnimationActive={false}
                   />
                 </LineChart>
               </ResponsiveContainer>
@@ -113,21 +103,32 @@ export function Battery({ carId }: { carId?: number }) {
                 <AreaChart data={range} margin={{ top: 6, right: 14, bottom: 0, left: 2 }}>
                   <defs>
                     <linearGradient id="rangeFill" x1="0" y1="0" x2="0" y2="1">
-                      <stop offset="0%" stopColor="#3fb950" stopOpacity={0.28} />
-                      <stop offset="100%" stopColor="#3fb950" stopOpacity={0} />
+                      <stop offset="0%" stopColor={theme.colors.good} stopOpacity={0.26} />
+                      <stop offset="100%" stopColor={theme.colors.good} stopOpacity={0} />
                     </linearGradient>
                   </defs>
-                  <CartesianGrid {...GRID_PROPS} />
-                  <XAxis dataKey="label" minTickGap={26} {...AXIS_PROPS} />
-                  <YAxis width={48} domain={rangeScale.domain} ticks={rangeScale.ticks} allowDecimals={false} {...AXIS_PROPS} />
-                  <Tooltip content={<RangeTooltip />} cursor={{ stroke: "#2a3644" }} />
+                  <CartesianGrid {...theme.gridProps} />
+                  <XAxis dataKey="label" minTickGap={26} {...theme.axisProps} />
+                  <YAxis width={44} domain={rangeScale.domain} ticks={rangeScale.ticks} allowDecimals={false} {...theme.axisProps} />
+                  <Tooltip
+                    cursor={theme.cursor}
+                    content={({ active, payload, label }: any) =>
+                      active && payload?.length ? (
+                        <TooltipBox
+                          label={`${label} · ${payload[0].payload.n} 个样本`}
+                          rows={[{ name: "满电续航", value: n(payload[0].payload.value, 0), unit: "km", color: theme.colors.good }]}
+                        />
+                      ) : null
+                    }
+                  />
                   <Area
                     type="monotone"
                     dataKey="value"
-                    stroke="#3fb950"
+                    stroke={theme.colors.good}
                     strokeWidth={2}
                     fill="url(#rangeFill)"
-                    dot={false} isAnimationActive={false}
+                    dot={false}
+                    isAnimationActive={false}
                   />
                 </AreaChart>
               </ResponsiveContainer>
@@ -136,26 +137,32 @@ export function Battery({ carId }: { carId?: number }) {
         </Panel>
       </div>
 
-      <div className="grid gap-3.5 lg:grid-cols-[1fr_1fr]">
+      <div className="grid gap-3.5 lg:grid-cols-2">
         <Panel title="充电起始电量分布" hint="看你的充电习惯">
           <div className="h-[190px] px-2 pb-3 pt-4">
             <ResponsiveContainer width="100%" height="100%">
               <BarChart data={histogram} margin={{ top: 4, right: 14, bottom: 0, left: 2 }}>
-                <CartesianGrid {...GRID_PROPS} />
-                <XAxis dataKey="bucket" {...AXIS_PROPS} />
-                <YAxis width={44} allowDecimals={false} {...AXIS_PROPS} />
+                <CartesianGrid {...theme.gridProps} />
+                <XAxis dataKey="bucket" {...theme.axisProps} />
+                <YAxis width={40} allowDecimals={false} {...theme.axisProps} />
                 <Tooltip
-                  cursor={{ fill: "#141b23" }}
+                  cursor={{ fill: "transparent" }}
                   content={({ active, payload, label }: any) =>
                     active && payload?.length ? (
                       <TooltipBox
                         label={`SOC ${label}%`}
-                        rows={[{ name: "充电次数", value: payload[0].value, unit: "次", color: "#e82127" }]}
+                        rows={[{ name: "充电次数", value: payload[0].value, unit: "次", color: theme.colors.charge }]}
                       />
                     ) : null
                   }
                 />
-                <Bar dataKey="n" fill="#e82127" radius={[3, 3, 0, 0]} isAnimationActive={false} maxBarSize={26} />
+                <Bar
+                  dataKey="n"
+                  fill={theme.colors.charge}
+                  radius={[3, 3, 0, 0]}
+                  isAnimationActive={false}
+                  maxBarSize={26}
+                />
               </BarChart>
             </ResponsiveContainer>
           </div>
@@ -168,14 +175,14 @@ export function Battery({ carId }: { carId?: number }) {
           <div className="space-y-2.5 px-4 py-4 text-[12px] leading-relaxed text-muted">
             <p>
               <span className="text-ink">容量</span>：由每次充电的{" "}
-              <code className="rounded bg-[#0d1218] px-1 py-0.5 text-[11px] text-info">
+              <code className="rounded bg-panel-2 px-1 py-0.5 text-[11px] text-info">
                 charge_energy_added / (end_soc − start_soc)
               </code>{" "}
               推算，只取 SOC 跨度 ≥ 15% 且时长 ≥ 10 分钟的充电段。
             </p>
             <p>
               <span className="text-ink">续航</span>：用{" "}
-              <code className="rounded bg-[#0d1218] px-1 py-0.5 text-[11px] text-info">
+              <code className="rounded bg-panel-2 px-1 py-0.5 text-[11px] text-info">
                 end_rated_range_km / end_soc
               </code>{" "}
               归一化到 100%，只取结束 SOC ≥ 50% 的记录。

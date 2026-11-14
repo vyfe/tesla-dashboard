@@ -143,5 +143,6 @@ CREATE TABLE IF NOT EXISTS states (
 );
 
 CREATE INDEX IF NOT EXISTS idx_positions_drive ON positions (drive_id);
+CREATE INDEX IF NOT EXISTS idx_positions_car_date ON positions (car_id, date DESC);
 CREATE INDEX IF NOT EXISTS idx_drives_car_date ON drives (car_id, start_date DESC);
 CREATE INDEX IF NOT EXISTS idx_cp_car_date ON charging_processes (car_id, start_date DESC);

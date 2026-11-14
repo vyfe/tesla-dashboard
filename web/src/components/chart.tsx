@@ -1,16 +1,20 @@
-/** 图表共用样式：统一坐标轴、网格、tooltip 的观感。 */
+/** 图表共用样式：坐标轴、网格、tooltip 跟着主题走。 */
 
-export const AXIS_TICK = { fill: "#5c6672", fontSize: 11 };
-export const AXIS_PROPS = {
-  tick: AXIS_TICK,
-  axisLine: false,
-  tickLine: false,
-} as const;
+import { useChartColors } from "../lib/theme";
 
-export const GRID_PROPS = {
-  stroke: "#161d26",
-  vertical: false,
-} as const;
+export function useChartTheme() {
+  const colors = useChartColors();
+  return {
+    colors,
+    axisProps: {
+      tick: { fill: colors.axis, fontSize: 11 },
+      axisLine: false,
+      tickLine: false,
+    } as const,
+    gridProps: { stroke: colors.grid, vertical: false } as const,
+    cursor: { stroke: colors.cursor } as const,
+  };
+}
 
 interface TooltipRow {
   name?: string;
@@ -27,7 +31,7 @@ export function TooltipBox({
   rows: TooltipRow[];
 }) {
   return (
-    <div className="min-w-[120px] rounded-lg border border-[#25303d] bg-[#0d1218]/95 px-3 py-2 shadow-xl backdrop-blur">
+    <div className="min-w-[120px] rounded-lg border border-line bg-panel px-3 py-2 shadow-[var(--shadow)]">
       {label && <div className="mb-1 text-[11px] text-dim">{label}</div>}
       {rows.map((row, index) => (
         <div key={index} className="flex items-center gap-2 text-[12px]">
@@ -37,7 +41,7 @@ export function TooltipBox({
           <span className="text-muted">{row.name}</span>
           <span className="num ml-auto font-medium text-ink">
             {row.value}
-            {row.unit && <span className="ml-0.5 text-[10px] font-normal text-dim">{row.unit}</span>}
+            {row.unit && <span className="ml-0.5 font-sans text-[10px] font-normal text-dim">{row.unit}</span>}
           </span>
         </div>
       ))}
