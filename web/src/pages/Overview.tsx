@@ -4,6 +4,7 @@ import type { Overview as OverviewData, TimelineData } from "../types";
 import { Empty, ErrorBox, Loading, Panel } from "../components/Panel";
 import { CalendarHeatmap } from "../components/CalendarHeatmap";
 import { StateTimeline } from "../components/StateTimeline";
+import { HoverMap } from "../components/MiniMap";
 import { dateTime, delta, duration, km, n, pct, timeOfDay } from "../lib/format";
 import type { Tab } from "../components/Shell";
 
@@ -256,7 +257,17 @@ export function Overview({ carId, onNavigate }: Props) {
                   <div className="min-w-0">
                     <div className="text-[11px] text-muted">{dateTime(charge.started_at)}</div>
                     <div className="truncate text-[12px]">
-                      {charge.address} · {charge.is_fast ? "快充" : "慢充"}
+                      <HoverMap
+                        lat={charge.lat}
+                        lng={charge.lng}
+                        title={charge.address}
+                        subtitle={`充电 ${n(charge.kwh, 1)} kWh · ${dateTime(charge.started_at)}`}
+                      >
+                        <span className="underline decoration-dotted underline-offset-2">
+                          {charge.address}
+                        </span>
+                      </HoverMap>{" "}
+                      · {charge.is_fast ? "快充" : "慢充"}
                     </div>
                   </div>
                   <div className="ml-auto text-right">

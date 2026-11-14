@@ -1,6 +1,7 @@
 import { Empty, Panel } from "./Panel";
-import { n } from "../lib/format";
-import type { TimelineData } from "../types";
+import { HoverMap } from "./MiniMap";
+import { n, stopDuration, timeOfDay } from "../lib/format";
+import type { TimelineCharge, TimelineData, TimelineStop } from "../types";
 
 interface Props {
   data: TimelineData | null;
@@ -20,50 +21,148 @@ function addDays(date: Date, days: number): Date {
   return next;
 }
 
-function clock(date: Date): string {
-  return `${String(date.getHours()).padStart(2, "0")}:${String(date.getMinutes()).padStart(2, "0")}`;
+/** 一段时间轴上的片段：行驶 / 停留 / 充电，三者互斥、按时间首尾相接。 */
+type Kind = "drive" | "stop" | "charge";
+
+interface Interval {
+  from: number;
+  to: number;
+  kind: Kind;
+  drive?: TimelineData["drives"][number];
+  charge?: TimelineCharge;
+  stop?: TimelineStop;
 }
 
-interface Segment {
+interface Segment extends Interval {
   left: number;
   width: number;
-  label: string;
+  /** 片段来源，用来把被边界切开��同一事件接回去 */
+  source: Interval;
 }
 
-function clip(
-  start: string,
-  end: string | null,
+/**
+ * 把一天的行驶 / 停留 / 充电切成一串互不重叠的片段。
+ * 同一时刻可能同时命中充电和停留（充电时车是停着的），按「充电 > 行驶 > 停留」取优先级。
+ */
+function buildSegments(
   dayStart: Date,
   dayEnd: Date,
-): Segment | null {
-  const from = new Date(start).getTime();
-  const to = end ? new Date(end).getTime() : dayEnd.getTime();
-  const clippedFrom = Math.max(from, dayStart.getTime());
-  const clippedTo = Math.min(to, dayEnd.getTime());
-  if (clippedTo <= clippedFrom) return null;
-  return {
-    left: ((clippedFrom - dayStart.getTime()) / DAY_MS) * 100,
-    width: ((clippedTo - clippedFrom) / DAY_MS) * 100,
-    label: `${clock(new Date(clippedFrom))}–${clock(new Date(clippedTo))}`,
-  };
+  drives: TimelineData["drives"],
+  charges: TimelineCharge[],
+  stops: TimelineStop[],
+): Segment[] {
+  const t0 = dayStart.getTime();
+  const t1 = dayEnd.getTime();
+  const events: Interval[] = [];
+
+  for (const drive of drives) {
+    const from = Math.max(t0, new Date(drive.start).getTime());
+    const to = Math.min(t1, drive.end ? new Date(drive.end).getTime() : t1);
+    if (to > from) events.push({ from, to, kind: "drive", drive });
+  }
+  for (const charge of charges) {
+    const from = Math.max(t0, new Date(charge.start).getTime());
+    const to = Math.min(t1, charge.end ? new Date(charge.end).getTime() : t1);
+    if (to > from) events.push({ from, to, kind: "charge", charge });
+  }
+  for (const stop of stops) {
+    const from = Math.max(t0, new Date(stop.start).getTime());
+    const to = Math.min(t1, stop.end ? new Date(stop.end).getTime() : t1);
+    if (to > from) events.push({ from, to, kind: "stop", stop });
+  }
+
+  const bounds = new Set<number>([t0, t1]);
+  for (const event of events) {
+    bounds.add(event.from);
+    bounds.add(event.to);
+  }
+  const points = [...bounds].sort((a, b) => a - b);
+
+  const segments: Segment[] = [];
+  for (let i = 0; i < points.length - 1; i += 1) {
+    const from = points[i];
+    const to = points[i + 1];
+    if (to <= from) continue;
+    const mid = (from + to) / 2;
+    const hit =
+      events.find((e) => e.kind === "charge" && mid >= e.from && mid < e.to) ??
+      events.find((e) => e.kind === "drive" && mid >= e.from && mid < e.to) ??
+      events.find((e) => e.kind === "stop" && mid >= e.from && mid < e.to);
+    if (!hit) continue;
+    const last = segments[segments.length - 1];
+    // 同一个事件被边界切开时接回去，别在中间留缝
+    if (last && last.kind === hit.kind && last.source === hit) {
+      last.to = to;
+      last.width = ((last.to - last.from) / DAY_MS) * 100;
+      continue;
+    }
+    segments.push({
+      ...hit,
+      from,
+      to,
+      source: hit,
+      left: ((from - t0) / DAY_MS) * 100,
+      width: ((to - from) / DAY_MS) * 100,
+    });
+  }
+  return segments;
 }
 
-/** TeslaMate 的 states 命名：online / asleep / offline / updating，未知的按静置处理。 */
-function stateTone(state: string): string {
-  if (state === "online" || state === "updating") return "bg-muted/25";
-  if (state === "driving") return "bg-drive/40";
-  if (state === "charging") return "bg-charge/40";
-  return "";
+/** 行驶片段：起终点 + 里程，鼠标指上去看。 */
+function DriveSegment({ segment }: { segment: Segment }) {
+  const drive = segment.drive;
+  if (!drive) return null;
+  const from = drive.from ?? "起点";
+  const to = drive.to ?? "终点";
+  return (
+    <span
+      className="absolute inset-y-0 bg-drive"
+      style={{ left: `${segment.left}%`, width: `${segment.width}%` }}
+      title={`行驶 ${from} → ${to} · ${timeOfDay(drive.start)}–${timeOfDay(drive.end ?? drive.start)} · ${n(drive.distance_km, 1)} km`}
+    />
+  );
 }
 
-function stateLabel(state: string): string {
-  if (state === "online") return "在线";
-  if (state === "asleep") return "睡眠";
-  if (state === "offline") return "离线";
-  if (state === "updating") return "升级";
-  if (state === "driving") return "行驶";
-  if (state === "charging") return "充电";
-  return state;
+/** 停留片段：地点和时长指上去才展开，鼠标停住还会弹一张小地图。 */
+function StopSegment({ segment }: { segment: Segment }) {
+  const stop = segment.stop;
+  if (!stop) return null;
+  const label = stop.name ?? "未命名地点";
+  return (
+    <HoverMap
+      lat={stop.lat}
+      lng={stop.lng}
+      title={label}
+      subtitle={`停留 ${stopDuration(stop.minutes)} · ${timeOfDay(stop.start)}–${timeOfDay(stop.end ?? stop.start)}`}
+    >
+      <span
+        className="absolute inset-y-0 bg-muted/25 hover:bg-muted/40"
+        style={{ left: `${segment.left}%`, width: `${segment.width}%` }}
+        title={`停留 ${label} · ${stopDuration(stop.minutes)}`}
+      />
+    </HoverMap>
+  );
+}
+
+/** 充电片段：地点、充电量，附小地图。 */
+function ChargeSegment({ segment }: { segment: Segment }) {
+  const charge = segment.charge;
+  if (!charge) return null;
+  const label = charge.name ?? "充电点";
+  return (
+    <HoverMap
+      lat={charge.lat}
+      lng={charge.lng}
+      title={label}
+      subtitle={`充电 ${n(charge.kwh, 1)} kWh · ${timeOfDay(charge.start)}–${timeOfDay(charge.end ?? charge.start)}`}
+    >
+      <span
+        className="absolute inset-y-0 bg-charge"
+        style={{ left: `${segment.left}%`, width: `${segment.width}%` }}
+        title={`充电 ${label} · ${n(charge.kwh, 1)} kWh`}
+      />
+    </HoverMap>
+  );
 }
 
 export function StateTimeline({ data, error = false }: Props) {
@@ -85,9 +184,9 @@ export function StateTimeline({ data, error = false }: Props) {
 
   const today = startOfDay(new Date());
   const days = Array.from({ length: 7 }, (_, index) => addDays(today, index - 6));
-  const empty =
-    data.drives.length === 0 && data.charges.length === 0 && (data.states?.length ?? 0) === 0;
+  const empty = data.drives.length === 0 && data.charges.length === 0 && data.stops.length === 0;
   const chargedKwh = data.charges.reduce((sum, item) => sum + (item.kwh ?? 0), 0);
+  const stoppedMinutes = data.stops.reduce((sum, item) => sum + (item.minutes ?? 0), 0);
 
   return (
     <Panel
@@ -97,10 +196,8 @@ export function StateTimeline({ data, error = false }: Props) {
       hint={
         <span className="flex items-center gap-2.5">
           <span className="flex items-center gap-1"><i className="h-1.5 w-3 rounded-full bg-drive" />行驶</span>
+          <span className="flex items-center gap-1"><i className="h-1.5 w-3 rounded-full bg-muted/40" />停留</span>
           <span className="flex items-center gap-1"><i className="h-1.5 w-3 rounded-full bg-charge" />充电</span>
-          {data.states_available && (
-            <span className="flex items-center gap-1"><i className="h-1.5 w-3 rounded-full bg-muted/40" />在线</span>
-          )}
         </span>
       }
     >
@@ -108,82 +205,55 @@ export function StateTimeline({ data, error = false }: Props) {
         <Empty>这段时间没有行驶或充电记录</Empty>
       ) : (
         <div className="flex-1 px-4 pb-3 pt-3.5">
-          <div className="space-y-1.5">
+          <div className="space-y-2">
             {days.map((day) => {
               const dayStart = day;
               const dayEnd = addDays(day, 1);
-              const drives = data.drives.flatMap((item) => {
-                const segment = clip(item.start, item.end, dayStart, dayEnd);
-                return segment ? [{ ...segment, item }] : [];
-              });
-              const charges = data.charges.flatMap((item) => {
-                const segment = clip(item.start, item.end, dayStart, dayEnd);
-                return segment ? [{ ...segment, item }] : [];
-              });
-              const states = (data.states ?? []).flatMap((item) => {
-                const segment = clip(item.start, item.end, dayStart, dayEnd);
-                return segment ? [{ ...segment, item }] : [];
-              });
-
+              const segments = buildSegments(
+                dayStart,
+                dayEnd,
+                data.drives,
+                data.charges,
+                data.stops
+              );
               return (
                 <div key={day.toISOString()} className="flex items-center gap-2">
-                  <div className="w-[52px] shrink-0 text-[10px] leading-tight text-dim">
+                  <div className="w-[52px] shrink-0 pt-0.5 text-[10px] leading-tight text-dim">
                     <div>周{WEEKDAYS[day.getDay()]}</div>
                     <div className="num text-[9px]">
                       {day.getMonth() + 1}-{String(day.getDate()).padStart(2, "0")}
                     </div>
                   </div>
-                  <div className="relative h-4 flex-1 overflow-hidden rounded-[3px] bg-panel-2">
-                    {states.map((segment, index) => (
-                      <span
-                        key={`s-${index}`}
-                        className={`absolute inset-y-0 ${stateTone(segment.item.state)}`}
-                        style={{ left: `${segment.left}%`, width: `${segment.width}%` }}
-                        title={`${stateLabel(segment.item.state)} ${segment.label}`}
-                      />
-                    ))}
-                    {drives.map((segment, index) => (
-                      <span
-                        key={`d-${index}`}
-                        className="absolute top-[4px] h-2 rounded-[2px] bg-drive"
-                        style={{ left: `${segment.left}%`, width: `${segment.width}%` }}
-                        title={`行驶 ${segment.label} · ${n(segment.item.distance_km, 1)} km`}
-                      />
-                    ))}
-                    {charges.map((segment, index) => (
-                      <span
-                        key={`c-${index}`}
-                        className="absolute top-[4px] h-2 rounded-[2px] bg-charge"
-                        style={{ left: `${segment.left}%`, width: `${segment.width}%` }}
-                        title={`充电 ${segment.label} · ${n(segment.item.kwh, 1)} kWh`}
-                      />
-                    ))}
+                  <div className="relative h-3.5 flex-1 overflow-hidden rounded-[3px] bg-panel-2">
+                    {segments.map((segment, index) => {
+                      if (segment.kind === "drive") return <DriveSegment key={index} segment={segment} />;
+                      if (segment.kind === "charge") return <ChargeSegment key={index} segment={segment} />;
+                      return <StopSegment key={index} segment={segment} />;
+                    })}
                   </div>
                 </div>
               );
             })}
           </div>
 
-          <div className="mt-1.5 flex justify-between pl-[60px] text-[9px] text-dim">
+          <div className="mt-2 flex justify-between pl-[60px] text-[9px] text-dim">
             {["00", "06", "12", "18", "24"].map((hour) => (
               <span key={hour}>{hour}</span>
             ))}
           </div>
-
-          {!data.states_available && (
-            <p className="mt-2 text-[10px] leading-relaxed text-dim">
-              未授权 states 表，只显示行驶与充电。授权后可以看到在线 / 睡眠时段。
-            </p>
-          )}
         </div>
       )}
 
       {!empty && (
         <div className="mt-auto flex flex-wrap items-center gap-x-4 border-t border-line-soft px-4 py-2.5 text-[10px] text-dim">
-          <span>近 7 天行驶 {data.drives.length} 次</span>
+          <span>行驶 {data.drives.length} 次</span>
           <span>
             充电 {data.charges.length} 次
             {chargedKwh > 0 ? ` · ${n(chargedKwh, 1)} kWh` : ""}
+          </span>
+          <span>
+            停留 {data.stops.length} 处
+            {data.stops.length > 0 ? ` · 合计 ${stopDuration(stoppedMinutes)}` : ""}
           </span>
         </div>
       )}

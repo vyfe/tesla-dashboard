@@ -250,6 +250,9 @@ function buildCar(scenario: Scenario, now: Date): CarDataset {
       startedAt.setHours(hour, rng.int(0, 59), 0, 0);
       const endedAt = new Date(startedAt.getTime() + durationMin * 60_000);
       const place = fast ? `${rng.pick(scenario.farPlaces).name}服务区` : "家";
+      const placeCoord = [...scenario.places, ...scenario.farPlaces].find(
+        (candidate) => place.startsWith(candidate.name),
+      );
 
       charges.push({
         id: chargeId,
@@ -265,6 +268,8 @@ function buildCar(scenario: Scenario, now: Date): CarDataset {
         end_soc: endSoc,
         cost: round(kwh * scenario.pricePerKwh * rng.float(0.94, 1.08), 2),
         address: addressOf(scenario.city, place, rng),
+        lat: placeCoord?.lat ?? null,
+        lng: placeCoord?.lng ?? null,
       });
       chargeId += 1;
       soc = endSoc;
@@ -575,6 +580,52 @@ export function deriveChargesPage(data: CarDataset, limit: number, offset: numbe
   };
 }
 
+/**
+ * 停留段：行程结束后车停在目的地若干分钟，充电过程也算一次长时间停留。
+ * 坐标取行程终点的 place。
+ */
+function deriveStops(
+  drives: CarDataset["drives"],
+  charges: CarDataset["charges"],
+  series: CarDataset["series"],
+): TimelineData["stops"] {
+  const stops: TimelineData["stops"] = [];
+  for (const drive of drives) {
+    if (!drive.ended_at) continue;
+    // 轨迹的最后一个点就是目的地，停留地点取它的坐标
+    const last = series.get(drive.id)?.at(-1);
+    if (!last || last.lat == null || last.lng == null) continue;
+    const end = new Date(drive.ended_at);
+    const minutes = 20 + Math.round((drive.distance_km ?? 0) * 0.8);
+    const stopEnd = new Date(end.getTime() + minutes * 60_000);
+    stops.push({
+      start: drive.ended_at,
+      end: stopEnd.toISOString(),
+      minutes,
+      lat: last.lat,
+      lng: last.lng,
+      name: drive.to,
+      source: "address",
+    });
+  }
+  for (const charge of charges) {
+    if (!charge.ended_at || charge.lat == null || charge.lng == null) continue;
+    const end = new Date(charge.ended_at);
+    const minutes = 25 + Math.round(charge.kwh ?? 0);
+    const stopEnd = new Date(end.getTime() + minutes * 60_000);
+    stops.push({
+      start: charge.ended_at,
+      end: stopEnd.toISOString(),
+      minutes,
+      lat: charge.lat,
+      lng: charge.lng,
+      name: charge.address,
+      source: "address",
+    });
+  }
+  return stops.sort((a, b) => a.start.localeCompare(b.start));
+}
+
 export function deriveTimeline(data: CarDataset, days: number, now: Date): TimelineData {
   const since = new Date(now.getTime() - days * DAY_MS);
   const inRange = (iso: string | null) => {
@@ -610,12 +661,18 @@ export function deriveTimeline(data: CarDataset, days: number, now: Date): Timel
       start: drive.started_at,
       end: drive.ended_at,
       distance_km: drive.distance_km,
+      from: drive.from,
+      to: drive.to,
     })),
     charges: charges.map((charge) => ({
       start: charge.started_at,
       end: charge.ended_at,
       kwh: charge.kwh,
+      lat: charge.lat,
+      lng: charge.lng,
+      name: charge.address,
     })),
+    stops: deriveStops(drives, charges, data.series),
     states,
     states_available: true,
   };

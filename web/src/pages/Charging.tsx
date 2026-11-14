@@ -10,6 +10,7 @@ import {
 } from "recharts";
 import { api } from "../api";
 import type { ChargesPage } from "../types";
+import { HoverMap } from "../components/MiniMap";
 import { Empty, ErrorBox, Kpi, Loading, Panel } from "../components/Panel";
 import { TooltipBox, useChartTheme } from "../components/chart";
 import { dateTime, duration, monthLabel, n, pct } from "../lib/format";
@@ -136,7 +137,16 @@ export function Charging({ carId }: { carId?: number }) {
                         <span
                           className={`h-1.5 w-1.5 rounded-full ${charge.is_fast ? "bg-charge" : "bg-good"}`}
                         />
-                        <span className="max-w-[180px] truncate">{charge.address}</span>
+                        <HoverMap
+                          lat={charge.lat}
+                          lng={charge.lng}
+                          title={charge.address}
+                          subtitle={`充电 ${n(charge.kwh, 1)} kWh · ${dateTime(charge.started_at)}`}
+                        >
+                          <span className="max-w-[180px] truncate underline decoration-dotted underline-offset-2">
+                            {charge.address}
+                          </span>
+                        </HoverMap>
                         <span className="text-[10px] text-dim">{charge.is_fast ? "快充" : "慢充"}</span>
                       </span>
                     </td>

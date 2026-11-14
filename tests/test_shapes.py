@@ -5,6 +5,7 @@ from __future__ import annotations
 import sys
 import unittest
 from datetime import datetime
+from decimal import Decimal
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -45,6 +46,8 @@ def charge_row(**overrides) -> dict:
         "end_battery_level": 80,
         "cost": 20.0,
         "address": "家, 朝阳区",
+        "latitude": Decimal("39.996200"),
+        "longitude": Decimal("116.480800"),
     }
     base.update(overrides)
     return base
@@ -80,6 +83,16 @@ class ChargeShapeTest(unittest.TestCase):
     def test_fast_flag_uses_average_power(self) -> None:
         self.assertFalse(main._shape_charge(charge_row())["is_fast"])
         self.assertTrue(main._shape_charge(charge_row(duration_min=30))["is_fast"])
+
+    def test_charge_carries_place_coordinates(self) -> None:
+        shaped = main._shape_charge(charge_row())
+        self.assertAlmostEqual(shaped["lat"], 39.9962)
+        self.assertAlmostEqual(shaped["lng"], 116.4808)
+
+    def test_charge_without_coordinates_is_none(self) -> None:
+        shaped = main._shape_charge(charge_row(latitude=None, longitude=None))
+        self.assertIsNone(shaped["lat"])
+        self.assertIsNone(shaped["lng"])
 
 
 if __name__ == "__main__":

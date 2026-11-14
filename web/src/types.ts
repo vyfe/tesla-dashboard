@@ -64,6 +64,9 @@ export interface Charge {
   end_soc: number | null;
   cost: number | null;
   address: string;
+  /** 充电点坐标（WGS-84），悬停出小地图用 */
+  lat: number | null;
+  lng: number | null;
 }
 
 export interface VehicleStatus {
@@ -93,12 +96,32 @@ export interface TimelineInterval {
   end: string | null;
 }
 
+/** 一次停留：车静止不动的那段时间。 */
+export interface TimelineStop extends TimelineInterval {
+  minutes: number;
+  lat: number | null;
+  lng: number | null;
+  /** 地点名（围栏名或逆地理编码地址） */
+  name: string | null;
+  /** 名字来源：geofence（自己起的围栏名）/ address（逆地理编码） */
+  source: string | null;
+}
+
+/** 一次充电：比 TimelineInterval 多带充电点坐标。 */
+export interface TimelineCharge extends TimelineInterval {
+  kwh: number | null;
+  lat: number | null;
+  lng: number | null;
+  name: string | null;
+}
+
 export interface TimelineData {
   days: number;
   since: string;
   until: string;
-  drives: (TimelineInterval & { distance_km: number | null })[];
-  charges: (TimelineInterval & { kwh: number | null })[];
+  drives: (TimelineInterval & { distance_km: number | null; from: string; to: string })[];
+  charges: TimelineCharge[];
+  stops: TimelineStop[];
   states: (TimelineInterval & { state: string })[];
   states_available: boolean;
 }

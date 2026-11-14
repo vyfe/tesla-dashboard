@@ -3,6 +3,7 @@ import type L from "leaflet";
 import "leaflet/dist/leaflet.css";
 import type { SeriesPoint } from "../types";
 import { wgs84ToGcj02 } from "../lib/gcj02";
+import { loadLeaflet } from "../lib/leaflet";
 
 interface Basemap {
   id: string;
@@ -125,9 +126,8 @@ export function DriveMap({ points, height = 320 }: { points: SeriesPoint[]; heig
   useEffect(() => {
     let disposed = false;
     (async () => {
-      const mod = await import("leaflet");
+      const L = await loadLeaflet();
       if (disposed || !containerRef.current || mapRef.current) return;
-      const L = mod.default;
       leafletRef.current = L;
 
       const map = L.map(containerRef.current, {

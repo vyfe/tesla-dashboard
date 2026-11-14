@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 from datetime import date, datetime, timedelta, timezone
 from statistics import median
 from typing import Any
@@ -198,7 +199,7 @@ def charges(
         SELECT cp.id, cp.start_date, cp.end_date, cp.duration_min,
                cp.charge_energy_added, cp.charge_energy_used, cp.cost,
                cp.start_battery_level, cp.end_battery_level,
-               a.display_name AS address
+               a.display_name AS address, a.latitude, a.longitude
         FROM charging_processes cp
         LEFT JOIN addresses a ON a.id = cp.address_id
         WHERE cp.car_id = %(car)s AND cp.end_date IS NOT NULL
@@ -240,11 +241,11 @@ def month_energy(car_id: int, *, months_back: int = 0, offset_hours: int = 8) ->
 
 def drive_intervals(car_id: int, since: datetime) -> list[dict]:
     return db.query(
-        """
-        SELECT start_date, end_date, distance
-        FROM drives
-        WHERE car_id = %(car)s AND start_date >= %(since)s AND end_date IS NOT NULL
-        ORDER BY start_date
+        f"""
+        SELECT {DRIVE_COLUMNS}
+        {DRIVE_JOINS}
+        WHERE d.car_id = %(car)s AND d.start_date >= %(since)s AND d.end_date IS NOT NULL
+        ORDER BY d.start_date
         """,
         {"car": car_id, "since": since},
     )
@@ -253,13 +254,129 @@ def drive_intervals(car_id: int, since: datetime) -> list[dict]:
 def charge_intervals(car_id: int, since: datetime) -> list[dict]:
     return db.query(
         """
-        SELECT start_date, end_date, charge_energy_added
-        FROM charging_processes
-        WHERE car_id = %(car)s AND start_date >= %(since)s AND end_date IS NOT NULL
-        ORDER BY start_date
+        SELECT cp.start_date, cp.end_date, cp.charge_energy_added,
+               a.display_name, a.latitude, a.longitude
+        FROM charging_processes cp
+        LEFT JOIN addresses a ON a.id = cp.address_id
+        WHERE cp.car_id = %(car)s AND cp.start_date >= %(since)s AND cp.end_date IS NOT NULL
+        ORDER BY cp.start_date
         """,
         {"car": car_id, "since": since},
     )
+
+
+def stop_intervals(
+    car_id: int,
+    since: datetime,
+    until: datetime,
+    *,
+    min_minutes: int = 15,
+) -> list[dict]:
+    """停留段：两次行程之间的空档。
+
+    TeslaMate 的 states 只有 online/offline，拿不到「停在哪」；但 drives 给了
+    每段行程的起止时间，中间那段路就是车停着的时间。坐标取行程结束时刻附近
+    的采样点（比用零速点判断稳得多——停车时 GPS 速度会飘，零速点会被噪声切碎）。
+
+    末尾那次行程之后到现在也算一段停留，车还停在那儿。
+    """
+    return db.query(
+        """
+        WITH d AS (
+            SELECT dr.end_date,
+                   LEAD(dr.start_date) OVER (ORDER BY dr.start_date) AS next_start
+            FROM drives dr
+            WHERE dr.car_id = %(car)s AND dr.end_date IS NOT NULL
+        )
+        SELECT d.end_date AS start_date,
+               COALESCE(d.next_start, %(until)s::timestamp) AS end_date,
+               p.latitude, p.longitude
+        FROM d
+        LEFT JOIN LATERAL (
+            SELECT latitude, longitude
+            FROM positions
+            WHERE car_id = %(car)s
+              AND date BETWEEN d.end_date - interval '3 minutes' AND d.end_date + interval '3 minutes'
+              AND latitude IS NOT NULL
+            ORDER BY abs(EXTRACT(EPOCH FROM (date - d.end_date)))
+            LIMIT 1
+        ) p ON true
+        WHERE (COALESCE(d.next_start, %(until)s::timestamp) - d.end_date) >= make_interval(mins => %(min)s)
+          AND d.end_date < %(until)s::timestamp
+          AND COALESCE(d.next_start, %(until)s::timestamp) > %(since)s::timestamp
+        ORDER BY d.end_date
+        """,
+        {
+            "car": car_id,
+            "since": since,
+            "until": until,
+            "min": min_minutes,
+        },
+    )
+
+
+def place_names(points: list[tuple[float, float]]) -> list[dict | None]:
+    """给一组坐标找地点名：围栏优先，其次附近的逆地理编码地址。
+
+    围栏是用户自己起的名字（"公司-京东总部"），比地址更准；地址表是 TeslaMate
+    逆向地理编码的结果，命中 200 米内才算。两次查询取回候选，匹配在内存里做，
+    避免每个点查一次库。
+    """
+    if not points:
+        return []
+    fences = db.query(
+        "SELECT name, latitude, longitude, radius FROM geofences WHERE latitude IS NOT NULL"
+    )
+    lats = [p[0] for p in points]
+    lons = [p[1] for p in points]
+    addresses = db.query(
+        """
+        SELECT display_name, latitude, longitude
+        FROM addresses
+        WHERE latitude BETWEEN %(min_lat)s AND %(max_lat)s
+          AND longitude BETWEEN %(min_lon)s AND %(max_lon)s
+        LIMIT 5000
+        """,
+        {
+            "min_lat": min(lats) - 0.02,
+            "max_lat": max(lats) + 0.02,
+            "min_lon": min(lons) - 0.02,
+            "max_lon": max(lons) + 0.02,
+        },
+    )
+
+    result: list[dict | None] = []
+    for lat, lon in points:
+        hit = None
+        for fence in fences:
+            distance = _distance_km(lat, lon, float(fence["latitude"]), float(fence["longitude"]))
+            if distance * 1000 <= float(fence["radius"]):
+                hit = {"name": fence["name"], "source": "geofence"}
+                break
+        if hit is None:
+            best = None
+            best_distance = 0.2
+            for address in addresses:
+                distance = _distance_km(lat, lon, float(address["latitude"]), float(address["longitude"]))
+                if distance < best_distance:
+                    best_distance = distance
+                    best = address
+            if best is not None:
+                hit = {"name": best["display_name"], "source": "address"}
+        result.append(hit)
+    return result
+
+
+def _distance_km(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
+    """两点球面距离（公里）。"""
+    radius = 6371.0
+    d_lat = math.radians(lat2 - lat1)
+    d_lon = math.radians(lon2 - lon1)
+    h = math.sin(d_lat / 2) ** 2 + math.cos(math.radians(lat1)) * math.cos(math.radians(lat2)) * (
+        math.sin(d_lon / 2) ** 2
+    )
+    return 2 * radius * math.asin(math.sqrt(h))
+
 
 
 def state_intervals(car_id: int, since: datetime) -> list[dict] | None:

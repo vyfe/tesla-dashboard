@@ -223,6 +223,8 @@ def _shape_charge(row: dict) -> dict:
         "end_soc": row.get("end_battery_level"),
         "cost": _num(row.get("cost"), 2),
         "address": _place(None, row.get("address")),
+        "lat": _num(row.get("latitude"), 6),
+        "lng": _num(row.get("longitude"), 6),
     }
 
 
@@ -304,11 +306,18 @@ def status(car: int | None = None) -> dict:
 
 @app.get("/api/timeline")
 def timeline(car: int | None = None, days: int = Query(7, ge=1, le=30)) -> dict:
-    """最近 N 天的行驶 / 充电 / 车辆状态区间，前端画成时间带。"""
+    """最近 N 天的行驶 / 充电 / 停留 / 车辆状态区间，前端画成时间带。"""
     vehicle = _resolve_car(car)
     until = datetime.now(timezone.utc)
     since = until - timedelta(days=days)
     states = queries.state_intervals(vehicle["id"], since)
+    charges = queries.charge_intervals(vehicle["id"], since)
+    stops = queries.stop_intervals(vehicle["id"], since, until)
+    # 只有带坐标的停留段才能配地点名，过滤后再和 place_names 一一对应
+    stops = [row for row in stops if row["latitude"] is not None and row["longitude"] is not None]
+    stop_places = queries.place_names(
+        [(float(row["latitude"]), float(row["longitude"])) for row in stops]
+    )
     return _clean(
         {
             "days": days,
@@ -319,6 +328,8 @@ def timeline(car: int | None = None, days: int = Query(7, ge=1, le=30)) -> dict:
                     "start": _iso(row.get("start_date")),
                     "end": _iso(row.get("end_date")),
                     "distance_km": _num(row.get("distance")),
+                    "from": _place(row.get("start_geofence"), row.get("start_address")),
+                    "to": _place(row.get("end_geofence"), row.get("end_address")),
                 }
                 for row in queries.drive_intervals(vehicle["id"], since)
             ],
@@ -327,8 +338,23 @@ def timeline(car: int | None = None, days: int = Query(7, ge=1, le=30)) -> dict:
                     "start": _iso(row.get("start_date")),
                     "end": _iso(row.get("end_date")),
                     "kwh": _num(row.get("charge_energy_added")),
+                    "lat": _num(row.get("latitude"), 6),
+                    "lng": _num(row.get("longitude"), 6),
+                    "name": row.get("display_name"),
                 }
-                for row in queries.charge_intervals(vehicle["id"], since)
+                for row in charges
+            ],
+            "stops": [
+                {
+                    "start": _iso(row.get("start_date")),
+                    "end": _iso(row.get("end_date")),
+                    "minutes": _num((row["end_date"] - row["start_date"]).total_seconds() / 60, 0),
+                    "lat": _num(row.get("latitude"), 6),
+                    "lng": _num(row.get("longitude"), 6),
+                    "name": place["name"] if place else None,
+                    "source": place["source"] if place else None,
+                }
+                for row, place in zip(stops, stop_places)
             ],
             "states": None
             if states is None

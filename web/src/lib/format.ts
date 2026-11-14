@@ -28,6 +28,14 @@ export function duration(minutes: number | null | undefined): string {
   return rest ? `${hours}h ${rest}m` : `${hours}h`;
 }
 
+/** 停留时长：分钟 / 小时 / 天，跨度大的用大单位更好读。 */
+export function stopDuration(minutes: number | null | undefined): string {
+  if (!minutes || minutes <= 0) return "—";
+  if (minutes < 60) return `${Math.round(minutes)} 分钟`;
+  if (minutes < 1440) return `${(minutes / 60).toFixed(1)} 小时`;
+  return `${(minutes / 1440).toFixed(1)} 天`;
+}
+
 const MONTHS = ["01", "02", "03", "04", "05", "06", "07", "08", "09", "10", "11", "12"];
 
 export function monthLabel(month: string): string {

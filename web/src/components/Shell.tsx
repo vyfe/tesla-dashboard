@@ -140,7 +140,7 @@ export function Shell({
       <footer className="mt-8 text-center text-[10px] text-dim">
         {IS_DEMO
           ? "演示页面 · 全部数据为程序生成的示例数据"
-          : "只读旁路服务 · 数据来自你自己的 TeslaMate PostgreSQL"}
+          : "数据来源：teslamate 私有数据收集服务，不对外公开展示"}
       </footer>
     </div>
   );
