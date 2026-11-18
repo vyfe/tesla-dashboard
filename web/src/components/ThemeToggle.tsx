@@ -1,4 +1,5 @@
 import { useTheme, type ThemeMode } from "../lib/theme";
+import { persistSettings } from "../lib/settings";
 
 const LABEL: Record<ThemeMode, string> = { auto: "自动", light: "浅色", dark: "深色" };
 
@@ -28,10 +29,18 @@ function Icon({ mode }: { mode: ThemeMode }) {
 
 export function ThemeToggle() {
   const { mode, cycle } = useTheme();
+
+  // 切换主题的同时写回 TeslaMate 的 settings 表，两边保持一致
+  const handleClick = () => {
+    const next: ThemeMode = mode === "auto" ? "light" : mode === "light" ? "dark" : "auto";
+    cycle();
+    void persistSettings({ theme_mode: next === "auto" ? "system" : next });
+  };
+
   return (
     <button
       type="button"
-      onClick={cycle}
+      onClick={handleClick}
       title={`主题：${LABEL[mode]}，点击切换`}
       aria-label={`主题：${LABEL[mode]}，点击切换`}
       className="inline-flex items-center gap-1.5 rounded-lg border border-line bg-panel px-2.5 py-1.5 text-[12px] text-muted transition-colors hover:bg-hover hover:text-ink"

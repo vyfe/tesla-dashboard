@@ -1,5 +1,5 @@
 import { Panel } from "./Panel";
-import { n } from "../lib/format";
+import { distance, distanceUnit, n } from "../lib/format";
 
 interface Props {
   daily: { date: string; km: number }[];
@@ -76,7 +76,7 @@ export function CalendarHeatmap({ daily }: Props) {
                   title={
                     future
                       ? `${date.getMonth() + 1} 月 ${date.getDate()} 日`
-                      : `${date.getMonth() + 1} 月 ${date.getDate()} 日 · ${n(km, 1)} km`
+                      : `${date.getMonth() + 1} 月 ${date.getDate()} 日 · ${n(distance(km), 1)} ${distanceUnit()}`
                   }
                   className={[
                     "aspect-square rounded-[3px] transition-transform duration-150",
@@ -103,9 +103,9 @@ export function CalendarHeatmap({ daily }: Props) {
       </div>
 
       <div className="grid grid-cols-3 gap-px border-t border-line-soft bg-line-soft">
-        <Stat label="近 5 周" value={`${n(total, 0)} km`} />
+        <Stat label="近 5 周" value={`${n(distance(total), 0)} ${distanceUnit()}`} />
         <Stat label="有行程" value={`${activeDays} 天`} />
-        <Stat label="单日最多" value={`${n(best, 1)} km`} />
+        <Stat label="单日最多" value={`${n(distance(best), 1)} ${distanceUnit()}`} />
       </div>
     </Panel>
   );

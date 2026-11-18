@@ -1,6 +1,6 @@
 import { Empty, Panel } from "./Panel";
 import { HoverMap } from "./MiniMap";
-import { n, stopDuration, timeOfDay } from "../lib/format";
+import { n, stopDuration, timeOfDay, km } from "../lib/format";
 import type { TimelineCharge, TimelineData, TimelineStop } from "../types";
 
 interface Props {
@@ -118,7 +118,7 @@ function DriveSegment({ segment }: { segment: Segment }) {
     <span
       className="absolute inset-y-0 bg-drive"
       style={{ left: `${segment.left}%`, width: `${segment.width}%` }}
-      title={`行驶 ${from} → ${to} · ${timeOfDay(drive.start)}–${timeOfDay(drive.end ?? drive.start)} · ${n(drive.distance_km, 1)} km`}
+      title={`行驶 ${from} → ${to} · ${timeOfDay(drive.start)}–${timeOfDay(drive.end ?? drive.start)} · ${km(drive.distance_km)}`}
     />
   );
 }

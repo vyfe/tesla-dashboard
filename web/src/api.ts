@@ -5,8 +5,12 @@ import type {
   ChargesPage,
   DrivesPage,
   DriveDetail,
+  Geofence,
+  GeofencesResponse,
   Meta,
   Overview,
+  Settings,
+  SettingsResponse,
   TimelineData,
   VehicleStatus,
 } from "./types";
@@ -40,6 +44,32 @@ async function get<T>(path: string, params?: Record<string, string | number | un
   return (await response.json()) as T;
 }
 
+async function send<T>(path: string, method: string, body?: unknown): Promise<T> {
+  const response = await fetch(new URL(`${BASE}${path}`, window.location.origin).toString(), {
+    method,
+    headers: {
+      Accept: "application/json",
+      ...(body === undefined ? {} : { "Content-Type": "application/json" }),
+    },
+    ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+  });
+  if (!response.ok) {
+    let detail = `HTTP ${response.status}`;
+    try {
+      const parsed = await response.json();
+      detail = parsed.detail ?? detail;
+    } catch {
+      /* 非 JSON 响应，保持默认信息 */
+    }
+    throw new ApiError(response.status, detail);
+  }
+  return (await response.json()) as T;
+}
+
+const put = <T,>(path: string, body: unknown) => send<T>(path, "PUT", body);
+const post = <T,>(path: string, body: unknown) => send<T>(path, "POST", body);
+const del = <T,>(path: string) => send<T>(path, "DELETE");
+
 /** 真实数据源：直连后端 /api/*。 */
 const httpApi: DataSource = {
   meta: () => get<Meta>("/api/meta"),
@@ -52,6 +82,20 @@ const httpApi: DataSource = {
   battery: (car?: number) => get<Battery>("/api/battery", { car }),
   charges: (params: { car?: number; limit?: number; offset?: number }) =>
     get<ChargesPage>("/api/charges", params),
+  geofences: () => get<GeofencesResponse>("/api/geofences"),
+  createGeofence: (values: Partial<Geofence>) =>
+    post<{ geofence: Geofence }>("/api/geofences", values),
+  updateGeofence: (id: number, values: Partial<Geofence>) =>
+    put<{ geofence: Geofence }>(`/api/geofences/${id}`, values),
+  deleteGeofence: (id: number) => del<{ ok: boolean }>(`/api/geofences/${id}`),
+  recalculateGeofence: (id: number, options: { link_history?: boolean; force?: boolean }) =>
+    post<{ linked: number; updated: number; still_unpriced: number }>(
+      `/api/geofences/${id}/recalculate`,
+      options,
+    ),
+  settings: () => get<SettingsResponse>("/api/settings"),
+  saveSettings: (settings: Settings) =>
+    put<{ settings: Settings; writable: boolean }>("/api/settings", { settings }),
 };
 
 /**

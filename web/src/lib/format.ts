@@ -1,5 +1,7 @@
 /** 数字、时间、单位的统一格式化，避免每个组件各写一套。 */
 
+import { getSettings, toConsumption, toDistance, toTemperature } from "./settings";
+
 export function n(value: number | null | undefined, digits = 0): string {
   if (value === null || value === undefined || Number.isNaN(value)) return "—";
   return value.toFixed(digits).replace(/\B(?=(\d{3})+(?!\d))/g, ",");
@@ -7,12 +9,48 @@ export function n(value: number | null | undefined, digits = 0): string {
 
 export function km(value: number | null | undefined, digits = 1): string {
   if (value === null || value === undefined) return "—";
-  return `${n(value, digits)} km`;
+  const { unit_of_length } = getSettings();
+  return `${n(toDistance(value, unit_of_length), digits)} ${unit_of_length}`;
+}
+
+/** 距离数值（不带单位），给「数值 + 单位」分开排版的地方用。 */
+export function distance(value: number | null | undefined): number | null {
+  if (value === null || value === undefined) return null;
+  return toDistance(value, getSettings().unit_of_length);
+}
+
+export function distanceUnit(): string {
+  return getSettings().unit_of_length;
+}
+
+/** 温度：°C / °F 跟设置走。 */
+export function temp(value: number | null | undefined, digits = 1): string {
+  if (value === null || value === undefined) return "—";
+  const { unit_of_temperature } = getSettings();
+  return `${n(toTemperature(value, unit_of_temperature), digits)} °${unit_of_temperature}`;
+}
+
+/** 电耗：kWh/100km 或 kWh/100mi。 */
+export function consumption(value: number | null | undefined, digits = 1): string {
+  if (value === null || value === undefined) return "—";
+  const { unit_of_length } = getSettings();
+  return `${n(toConsumption(value, unit_of_length), digits)} kWh/100${unit_of_length}`;
 }
 
 export function kwh(value: number | null | undefined, digits = 1): string {
   if (value === null || value === undefined) return "—";
   return `${n(value, digits)} kWh`;
+}
+
+/**
+ * 单价/金额：不能带千分位。
+ * n() 会给 0.6000 变成 "0.6,000"（小数点后三位被当成千位分组），所以单独写一个。
+ */
+export function price(value: number | null | undefined, digits = 4): string {
+  if (value === null || value === undefined) return "—";
+  const text = value.toFixed(digits);
+  // 去掉末尾多余的 0，但至少保留一位小数
+  return text.replace(/(\.\d*?[1-9])0+$/, "$1").replace(/\.0+$/, "");
 }
 
 export function pct(value: number | null | undefined, digits = 1): string {

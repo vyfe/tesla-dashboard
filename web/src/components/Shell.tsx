@@ -3,6 +3,7 @@ import { IS_DEMO } from "../api";
 import type { Car } from "../types";
 import { VehicleStatusStrip } from "./VehicleStatusStrip";
 import { ThemeToggle } from "./ThemeToggle";
+import { SettingsDialog } from "./SettingsDialog";
 
 export type Tab = "overview" | "drives" | "battery" | "charging";
 
@@ -21,6 +22,24 @@ interface ShellProps {
   tab: Tab;
   onTab: (tab: Tab) => void;
   children: ReactNode;
+}
+
+/** 齿轮按钮：打开显示设置。 */
+function SettingsButton({ onClick }: { onClick: () => void }) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      title="显示设置"
+      aria-label="显示设置"
+      className="inline-flex items-center rounded-lg border border-line bg-panel px-2.5 py-1.5 text-[12px] text-muted transition-colors hover:bg-hover hover:text-ink"
+    >
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" aria-hidden>
+        <circle cx="12" cy="12" r="3" />
+        <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1Z" />
+      </svg>
+    </button>
+  );
 }
 
 /** demo 模式顶部的提示条：标明数据是假的，并给出切换场景 / 复制链接的入口。 */
@@ -93,6 +112,7 @@ export function Shell({
   onTab,
   children,
 }: ShellProps) {
+  const [settingsOpen, setSettingsOpen] = useState(false);
   return (
     <div className="mx-auto max-w-[1180px] px-5 pb-16 pt-6 sm:px-7">
       {IS_DEMO && (
@@ -109,6 +129,7 @@ export function Shell({
 
           <div className="ml-auto flex items-center gap-2">
             <ThemeToggle />
+            <SettingsButton onClick={() => setSettingsOpen(true)} />
             <nav className="flex gap-1 rounded-[10px] border border-line bg-panel p-1" aria-label="页面">
               {TABS.map((item) => (
                 <button
@@ -136,6 +157,8 @@ export function Shell({
       <main key={tab} className="fade-up">
         {children}
       </main>
+
+      <SettingsDialog open={settingsOpen} onClose={() => setSettingsOpen(false)} />
 
       <footer className="mt-8 text-center text-[10px] text-dim">
         {IS_DEMO

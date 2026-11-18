@@ -6,12 +6,34 @@ export interface Car {
   vin?: string | null;
 }
 
+/** 显示设置：与 TeslaMate 的 settings 表同源，改一处两边都变。 */
+export interface Settings {
+  unit_of_length: "km" | "mi";
+  unit_of_temperature: "C" | "F";
+  preferred_range: "rated" | "ideal";
+  unit_of_pressure: "bar" | "psi";
+  language: string;
+  theme_mode: "system" | "light" | "dark";
+  base_url: string;
+  grafana_url: string;
+}
+
+export interface SettingsResponse {
+  settings: Settings;
+  writable: boolean;
+  languages: Array<{ code: string; label: string }>;
+}
+
 export interface Meta {
   cars: Car[];
   nominal_kwh: number;
   range: { first_drive?: string | null; last_drive?: string | null };
   /** demo 模式下各套场景的说明，用来在界面上标注当前看的是哪种用法。 */
   demo_scenarios?: { id: number; name: string; tagline: string }[];
+  /** 当前显示设置 */
+  settings?: Settings;
+  /** 看板是否具备写设置的能力 */
+  settings_writable?: boolean;
 }
 
 export interface Drive {
@@ -67,6 +89,44 @@ export interface Charge {
   /** 充电点坐标（WGS-84），悬停出小地图用 */
   lat: number | null;
   lng: number | null;
+  /** 命中的收藏点（圈定范围内） */
+  geofence_id: number | null;
+  geofence_name: string | null;
+}
+
+/** 收藏点（TeslaMate 的 geofences）：圈定范围 + 充电定价。 */
+export interface Geofence {
+  id: number;
+  name: string;
+  lat: number | null;
+  lng: number | null;
+  /** 圈定半径（米） */
+  radius: number;
+  /** 单价：per_kwh 是每度电，per_minute 是每分钟 */
+  cost_per_unit: number | null;
+  /** 每次充电的固定服务费 */
+  session_fee: number | null;
+  billing_type: "per_kwh" | "per_minute";
+  /** 关联到的充电次数 */
+  charges: number;
+  /** 其中已算出费用的次数 */
+  priced_charges: number;
+  /** 还没算价的次数 */
+  unpriced_charges: number;
+  energy_added: number | null;
+  energy_used: number | null;
+  /** 累计费用 */
+  total_cost: number | null;
+  /** 单次均价 */
+  avg_cost: number | null;
+  total_minutes: number | null;
+  last_charge_at: string | null;
+  updated_at: string | null;
+}
+
+export interface GeofencesResponse {
+  geofences: Geofence[];
+  writable: boolean;
 }
 
 export interface VehicleStatus {

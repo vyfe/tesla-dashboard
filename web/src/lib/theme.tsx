@@ -1,3 +1,4 @@
+import { getSettings } from "./settings";
 import {
   createContext,
   useCallback,
@@ -65,6 +66,23 @@ function systemTheme(): ResolvedTheme {
   return window.matchMedia(DARK_QUERY).matches ? "dark" : "light";
 }
 
+/** 服务端主题（TeslaMate 的 theme_mode）转成本地的三态。 */
+function fromServer(mode: string | undefined): ThemeMode {
+  if (mode === "light" || mode === "dark") return mode;
+  return "auto";
+}
+
+/** 用户是否在本地手动选过主题——选过就不被服务端覆盖。 */
+function hasLocalPreference(): boolean {
+  try {
+    if (new URLSearchParams(window.location.search).get("theme")) return true;
+    const stored = window.localStorage.getItem(STORAGE_KEY);
+    return stored === "auto" || stored === "light" || stored === "dark";
+  } catch {
+    return false;
+  }
+}
+
 function readMode(): ThemeMode {
   try {
     // 方便截图/嵌入时强制主题：?theme=light|dark
@@ -75,12 +93,21 @@ function readMode(): ThemeMode {
   } catch {
     /* 隐私模式下 localStorage 可能不可用，回退到自动 */
   }
-  return "auto";
+  // 本地没有偏好 → 用服务端的设置（system 视为自动）
+  return fromServer(getSettings().theme_mode);
 }
 
 export function ThemeProvider({ children }: { children: ReactNode }) {
   const [mode, setMode] = useState<ThemeMode>(readMode);
   const [system, setSystem] = useState<ResolvedTheme>(systemTheme);
+  const serverTheme = getSettings().theme_mode;
+
+  // 设置是异步拿到的：本地没有手动选过时，跟随服务端的主题
+  useEffect(() => {
+    if (!hasLocalPreference()) {
+      setMode(fromServer(serverTheme));
+    }
+  }, [serverTheme]);
 
   const resolved: ResolvedTheme = mode === "auto" ? system : mode;
 

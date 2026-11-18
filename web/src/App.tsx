@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { api, IS_DEMO } from "./api";
 import type { Meta } from "./types";
+import { setSettings, useSettings } from "./lib/settings";
 import { Shell, type Tab } from "./components/Shell";
 import { ErrorBox, Loading } from "./components/Panel";
 import { Overview } from "./pages/Overview";
@@ -12,6 +13,10 @@ export default function App() {
   const [meta, setMeta] = useState<Meta | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [carId, setCarId] = useState<number | null>(null);
+  // 在顶层订阅设置：单位变化时整棵树重新渲染。
+  // 各页面的格式化函数（km / temp / consumption）只是读 store，不自己订阅，
+  // 不在这里订阅的话，改了单位只有个别页面会跟着变。
+  useSettings();
   const [tab, setTab] = useState<Tab>(() => {
     const hash = window.location.hash.replace("#", "");
     return (["overview", "drives", "battery", "charging"] as Tab[]).includes(hash as Tab)
@@ -31,6 +36,8 @@ export default function App() {
         if (!alive) return;
         setMeta(value);
         setCarId(value.cars[0]?.id ?? null);
+        // 显示设置跟着 TeslaMate 的 settings 表走，改一处两边一致
+        if (value.settings) setSettings(value.settings);
       })
       .catch((err) => alive && setError(err.message ?? String(err)));
     return () => {

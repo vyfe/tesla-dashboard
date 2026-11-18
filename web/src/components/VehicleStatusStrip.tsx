@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { api, IS_DEMO } from "../api";
 import type { VehicleStatus as Status } from "../types";
-import { n } from "../lib/format";
+import {n, distance, distanceUnit} from "../lib/format";
 
 function ageLabel(minutes: number | null): string {
   if (minutes === null || minutes === undefined) return "—";
@@ -110,8 +110,16 @@ export function VehicleStatusStrip({ carId }: { carId?: number }) {
 
         <div className="hidden h-8 w-px bg-line-soft sm:block" />
 
-        <Stat label="剩余续航" value={status.range_km === null ? "—" : n(status.range_km)} unit="km" />
-        <Stat label="总里程" value={status.odometer_km === null ? "—" : n(status.odometer_km)} unit="km" />
+        <Stat
+          label="剩余续航"
+          value={status.range_km === null ? "—" : n(distance(status.range_km))}
+          unit={distanceUnit()}
+        />
+        <Stat
+          label="总里程"
+          value={status.odometer_km === null ? "—" : n(distance(status.odometer_km))}
+          unit={distanceUnit()}
+        />
         <Stat label="最后更新" value={ageLabel(status.age_min)} />
 
         <span className="ml-auto self-end text-[10px] text-dim">

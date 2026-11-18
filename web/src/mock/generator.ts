@@ -270,6 +270,8 @@ function buildCar(scenario: Scenario, now: Date): CarDataset {
         address: addressOf(scenario.city, place, rng),
         lat: placeCoord?.lat ?? null,
         lng: placeCoord?.lng ?? null,
+        geofence_id: placeCoord ? MOCK_GEOFENCE_ID : null,
+        geofence_name: placeCoord?.name ?? null,
       });
       chargeId += 1;
       soc = endSoc;
@@ -385,6 +387,9 @@ function monthlyMedians(
     .sort(([a], [b]) => a.localeCompare(b))
     .map(([month, values]) => ({ month, value: round(median(values), 2), n: values.length }));
 }
+
+// demo 用的虚拟收藏点 id（对应 mock/index.ts 里的 mockGeofences）
+const MOCK_GEOFENCE_ID = 1;
 
 export function deriveBattery(data: CarDataset, now: Date): Battery {
   const { scenario, charges } = data;

@@ -11,6 +11,7 @@ import {
 import { api } from "../api";
 import type { ChargesPage } from "../types";
 import { HoverMap } from "../components/MiniMap";
+import { GeofencePanel } from "../components/GeofencePanel";
 import { Empty, ErrorBox, Kpi, Loading, Panel } from "../components/Panel";
 import { TooltipBox, useChartTheme } from "../components/chart";
 import { dateTime, duration, monthLabel, n, pct } from "../lib/format";
@@ -106,6 +107,8 @@ export function Charging({ carId }: { carId?: number }) {
         )}
       </Panel>
 
+      <GeofencePanel />
+
       <Panel title="充电记录" hint={`共 ${n(data.total)} 条`}>
         {loading && <Loading />}
         {!loading && data.items.length === 0 && <Empty>暂无充电记录</Empty>}
@@ -147,6 +150,12 @@ export function Charging({ carId }: { carId?: number }) {
                             {charge.address}
                           </span>
                         </HoverMap>
+                        {charge.geofence_name && (
+                          <span className="inline-flex items-center gap-1 rounded-md border border-line-soft bg-panel-2 px-1.5 py-0.5 text-[10px] text-muted">
+                            <i className="h-1.5 w-1.5 rounded-full bg-[#2563eb]" />
+                            {charge.geofence_name}
+                          </span>
+                        )}
                         <span className="text-[10px] text-dim">{charge.is_fast ? "快充" : "慢充"}</span>
                       </span>
                     </td>

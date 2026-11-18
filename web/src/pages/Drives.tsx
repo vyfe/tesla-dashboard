@@ -15,7 +15,7 @@ import { DriveMap } from "../components/DriveMap";
 import { Empty, ErrorBox, Loading, Panel } from "../components/Panel";
 import { TooltipBox, useChartTheme } from "../components/chart";
 import { useChartColors } from "../lib/theme";
-import { dateTime, duration, km, kwh, n, timeOfDay } from "../lib/format";
+import { dateTime, duration, km, kwh, n, timeOfDay, temp, consumption } from "../lib/format";
 
 const PAGE_SIZE = 25;
 
@@ -83,7 +83,7 @@ function DriveModal({ id, carId, onClose }: { id: number; carId?: number; onClos
                   {" · "}
                   {km(detail.drive.distance_km)} · {duration(detail.drive.duration_min)} ·{" "}
                   {kwh(detail.drive.energy_kwh, 2)}
-                  {detail.drive.consumption ? ` · ${n(detail.drive.consumption, 1)} kWh/100km` : ""}
+                  {detail.drive.consumption ? ` · ${consumption(detail.drive.consumption)}` : ""}
                 </>
               )}
             </div>
@@ -178,7 +178,7 @@ function DriveModal({ id, carId, onClose }: { id: number; carId?: number; onClos
                   ["最高车速", `${n(detail.drive.max_speed, 0)} km/h`],
                   ["均速", `${n(detail.drive.avg_speed, 1)} km/h`],
                   ["爬升 / 下降", `${n(detail.drive.ascent, 0)} / ${n(detail.drive.descent, 0)} m`],
-                  ["车外温度", `${n(detail.drive.outside_temp, 1)} °C`],
+                  ["车外温度", temp(detail.drive.outside_temp)],
                 ].map(([label, value]) => (
                   <div key={label} className="rounded-lg border border-line-soft bg-panel-2 px-3 py-2">
                     <div className="text-[10px] text-dim">{label}</div>
@@ -266,7 +266,7 @@ export function Drives({ carId }: { carId?: number }) {
             <table className="w-full min-w-[360px] border-collapse">
               <thead>
                 <tr className="border-b border-line-soft">
-                  {["出发时间", "路线", "距离", "时长", "均速", "百公里电耗"].map((head, index) => (
+                  {["出发时间", "路线", "距离", "时长", "均速", "电耗"].map((head, index) => (
                     <th
                       key={head}
                       className={`whitespace-nowrap px-3 py-2.5 text-[10px] font-medium text-dim sm:px-4 ${
@@ -306,7 +306,7 @@ export function Drives({ carId }: { carId?: number }) {
                       className="num whitespace-nowrap px-4 py-2.5 text-right text-[13px] text-muted"
                       title={drive.energy_kwh ? `${n(drive.energy_kwh, 2)} kWh` : undefined}
                     >
-                      {drive.consumption ? n(drive.consumption, 1) : "—"}
+                      {consumption(drive.consumption)}
                     </td>
                   </tr>
                 ))}

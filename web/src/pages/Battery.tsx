@@ -16,12 +16,14 @@ import { api } from "../api";
 import type { Battery as BatteryData } from "../types";
 import { Empty, ErrorBox, Kpi, Loading, Panel } from "../components/Panel";
 import { TooltipBox, useChartTheme } from "../components/chart";
-import { monthLabel, n, niceScale, pct } from "../lib/format";
+import { distance, distanceUnit, monthLabel, n, niceScale, pct } from "../lib/format";
+import { useSettings } from "../lib/settings";
 
 export function Battery({ carId }: { carId?: number }) {
   const [data, setData] = useState<BatteryData | null>(null);
   const [error, setError] = useState<string | null>(null);
   const theme = useChartTheme();
+  const { preferred_range: preferredRange } = useSettings();
 
   useEffect(() => {
     let alive = true;
@@ -53,7 +55,12 @@ export function Battery({ carId }: { carId?: number }) {
           tone={data.health_pct && data.health_pct < 90 ? "warn" : "good"}
         />
         <Kpi label="估算容量" value={n(data.capacity_kwh, 1)} unit="kWh" hint={`${data.capacity_samples} 次充电推算`} />
-        <Kpi label="满电续航" value={n(data.range_km, 0)} unit="km" hint="按 rated range 折算" />
+        <Kpi
+          label="满电续航"
+          value={n(distance(data.range_km), 0)}
+          unit={distanceUnit()}
+          hint={`按 ${preferredRange === "ideal" ? "理想" : "额定"} range 折算`}
+        />
         <Kpi label="快充占比" value={pct(data.fast_share, 0)} hint="按充电次数统计" />
       </div>
 
@@ -116,7 +123,14 @@ export function Battery({ carId }: { carId?: number }) {
                       active && payload?.length ? (
                         <TooltipBox
                           label={`${label} · ${payload[0].payload.n} 个样本`}
-                          rows={[{ name: "满电续航", value: n(payload[0].payload.value, 0), unit: "km", color: theme.colors.good }]}
+                          rows={[
+                            {
+                              name: "满电续航",
+                              value: n(distance(payload[0].payload.value), 0),
+                              unit: distanceUnit(),
+                              color: theme.colors.good,
+                            },
+                          ]}
                         />
                       ) : null
                     }

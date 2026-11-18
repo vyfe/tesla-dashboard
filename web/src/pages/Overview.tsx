@@ -5,7 +5,7 @@ import { Empty, ErrorBox, Loading, Panel } from "../components/Panel";
 import { CalendarHeatmap } from "../components/CalendarHeatmap";
 import { StateTimeline } from "../components/StateTimeline";
 import { HoverMap } from "../components/MiniMap";
-import { dateTime, delta, duration, km, n, pct, timeOfDay } from "../lib/format";
+import { dateTime, delta, duration, km, n, pct, timeOfDay, consumption, distance, distanceUnit } from "../lib/format";
 import type { Tab } from "../components/Shell";
 
 interface Props {
@@ -101,7 +101,7 @@ export function Overview({ carId, onNavigate }: Props) {
               label="行驶耗电"
               value={ledger.consumed_kwh === null ? "—" : n(ledger.consumed_kwh, 1)}
               unit={ledger.consumed_kwh === null ? undefined : "kWh"}
-              hint={kpis.consumption ? `${n(kpis.consumption, 1)} kWh/100km` : "样本不足"}
+              hint={kpis.consumption ? consumption(kpis.consumption) : "样本不足"}
             />
           </div>
 
@@ -121,9 +121,9 @@ export function Overview({ carId, onNavigate }: Props) {
           )}
 
           <div className="flex flex-wrap items-center gap-x-4 gap-y-1 border-t border-line-soft px-4 py-2.5 text-[11px] text-muted">
-            <span>本月 {n(kpis.month_km, 1)} km</span>
+            <span>本月 {n(distance(kpis.month_km), 1)} {distanceUnit()}</span>
             <span>{n(kpis.month_drives)} 次行程</span>
-            <span>平均 {n(kpis.avg_trip_km, 1)} km/次</span>
+            <span>平均 {n(distance(kpis.avg_trip_km), 1)} {distanceUnit()}/次</span>
             {change && <span className="text-dim">较上月 {change.text}</span>}
           </div>
         </Panel>
@@ -151,7 +151,7 @@ export function Overview({ carId, onNavigate }: Props) {
               </div>
               <div>
                 <div className="text-[10px] text-dim">满电续航</div>
-                <div className="num mt-0.5 text-[13px]">{battery.range_km === null ? "—" : `${n(battery.range_km, 0)} km`}</div>
+                <div className="num mt-0.5 text-[13px]">{battery.range_km === null ? "—" : `${n(distance(battery.range_km), 0)} ${distanceUnit()}`}</div>
               </div>
             </div>
 
@@ -186,7 +186,7 @@ export function Overview({ carId, onNavigate }: Props) {
               <table className="w-full min-w-[330px] border-collapse">
                 <thead>
                   <tr className="border-b border-line-soft">
-                    {["路线", "距离", "时长", "百公里电耗"].map((head, index) => (
+                    {["路线", "距离", "时长", "电耗"].map((head, index) => (
                       <th
                         key={head}
                         className={`px-3 py-2 text-[10px] sm:px-4 font-medium text-dim ${
@@ -210,7 +210,7 @@ export function Overview({ carId, onNavigate }: Props) {
                         <div className="mt-0.5 text-[10px] text-dim">
                           {dateTime(drive.started_at)} · 均速 {n(drive.avg_speed, 0)} km/h
                           {drive.consumption ? (
-                            <span className="sm:hidden"> · {n(drive.consumption, 1)} kWh/100km</span>
+                            <span className="sm:hidden"> · {consumption(drive.consumption)}</span>
                           ) : null}
                         </div>
                       </td>
@@ -222,7 +222,7 @@ export function Overview({ carId, onNavigate }: Props) {
                         className="num hidden whitespace-nowrap px-3 py-2.5 text-right text-[13px] text-muted sm:table-cell sm:px-4"
                         title={drive.energy_kwh ? `${n(drive.energy_kwh, 2)} kWh` : undefined}
                       >
-                        {drive.consumption ? n(drive.consumption, 1) : "—"}
+                        {consumption(drive.consumption)}
                       </td>
                     </tr>
                   ))}
