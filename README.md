@@ -58,12 +58,50 @@ GRANT SELECT ON cars, drives, charging_processes, positions, addresses, geofence
 
 -- 近 7 天状态时间线需要；老版本没有这张表就跳过，页面会自动降级
 GRANT SELECT ON states TO tesla_readonly;
+
+-- 显示设置（单位、续航口径、主题…）跟 TeslaMate 面板同源，需要读权限
+GRANT SELECT ON settings TO tesla_readonly;
 ```
 
 > `positions` 是最大的表（百万行级），用于「行程详情」曲线和顶部状态条。
 > 不需要这些就把 `positions` 从授权里去掉，接口会返回空数组，页面降级为「没有轨迹采样点」。
 > 状态条按 `car_id + date` 取最新一条，生产库确认有对应索引，没有会很慢：
 > `CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_positions_car_date ON positions (car_id, date DESC);`
+
+### 1b. （可选）让看板能改显示设置
+
+看板右上角的齿轮可以直接改 TeslaMate 的显示设置，改完写回同一张 `settings` 表，
+TeslaMate 面板那边立刻跟着变。因为要写库，需要**另外一个**账号——
+它的权限被死死限定在 `settings` 表，碰不到任何行程数据：
+
+```sql
+CREATE ROLE tesla_settings_writer LOGIN PASSWORD '换成强密码';
+
+-- 只能读 / 改 settings 这张表，其他一律拒绝
+REVOKE ALL ON settings FROM tesla_settings_writer;
+GRANT SELECT, UPDATE ON settings TO tesla_settings_writer;
+```
+
+然后在 `.env` 里加一行（**和只读账号分开**，写连接池不加 `default_transaction_read_only`）：
+
+```bash
+SETTINGS_DATABASE_URL=postgresql://tesla_settings_writer:你的密码@database:5432/teslamate
+```
+
+看板要能编辑收藏点、重算历史费用，还要给这个账号加：
+
+```sql
+-- 收藏点：看板要能增删改
+GRANT SELECT, INSERT, UPDATE, DELETE ON geofences TO tesla_settings_writer;
+-- 重算历史费用：只允许改这两列，其余字段一律拒绝
+GRANT UPDATE (cost) ON charging_processes TO tesla_settings_writer;
+GRANT UPDATE (geofence_id) ON charging_processes TO tesla_settings_writer;
+```
+
+不配这一行，看板就是纯只读：设置面板能看能改，但保存会返回 503，页面本身不受影响。
+
+> 权限边界可以自己验一遍（应该全部被拒）：
+> `set role tesla_settings_writer; select count(*) from drives;` → permission denied
 
 ### 2. 配置
 
@@ -187,6 +225,8 @@ networks:
 - **近 7 天状态**：行驶（蓝）、充电（琥珀）、在线（灰）时间带；没授权 `states` 时只显示前两者。
 - **停留地点**：时间轴上每段停留标成一枚标签（地点名 + 时长），**鼠标悬停直接弹出小地图**标出它在哪儿；充电页和总览的充电记录同样悬停出图。地点名优先取 TeslaMate 的围栏名（"家"、"公司-京东总部"），围栏没罩住时退回逆地理编码的地址。
 - **主题**：默认跟随系统，右上角按钮循环「自动 → 浅色 → 深色」，选择存在 localStorage；也可以用 `?theme=light` / `?theme=dark` 强制。
+- **收藏点与充电定价**：充电页里的「收藏点与充电定价」板块。圈定一个范围 + 设定单价（每度电 / 每分钟）或服务费，命中圈内的充电就自动计费——公式与 TeslaMate 一致（每度电取「取电量与充入量的较大值」，每分钟按充电时长，再加服务费）。面板里有收藏点地图（蓝色圆圈即范围）、每个点的充电次数 / 累计费用 / 单次均价，能新建、编辑、删除，也能「补算缺价」或「按现价重算全部」。
+- **显示设置**：右上角齿轮打开。距离单位（km/mi）、温度单位（°C/°F）、续航口径（额定/理想）、压力单位、主题、界面语言、TeslaMate 面板与 Grafana 链接。**保存后直接写回 TeslaMate 的 `settings` 表**，两个界面保持一致（没配写账号时看板只读，保存会提示失败）。
 
 ### 停留是怎么算出来的
 
