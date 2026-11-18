@@ -215,12 +215,23 @@ def main() -> None:
         )
         address_ids[key] = cur.fetchone()[0]
 
+    # 收藏点定价：家按每度电 0.6 元，公司按每分钟 0.05 元 + 5 元服务费
+    geofence_pricing = {
+        "home": (0.6, None, "per_kwh"),
+        "work": (0.05, 5.0, "per_minute"),
+    }
     geofences = {"home": None, "work": None}
     for key in geofences:
         name, lat, lon, radius = places[key]
+        cost_per_unit, session_fee, billing_type = geofence_pricing[key]
         cur.execute(
-            "INSERT INTO geofences (name, latitude, longitude, radius) VALUES (%s, %s, %s, %s) RETURNING id",
-            (name, lat, lon, radius),
+            """
+            INSERT INTO geofences (name, latitude, longitude, radius,
+                                   cost_per_unit, session_fee, billing_type)
+            VALUES (%s, %s, %s, %s, %s, %s, %s)
+            RETURNING id
+            """,
+            (name, lat, lon, radius, cost_per_unit, session_fee, billing_type),
         )
         geofences[key] = cur.fetchone()[0]
 
@@ -354,15 +365,19 @@ def main() -> None:
                 hours=rng.randint(20, 23), minutes=rng.randint(0, 55)
             )
             end = start + timedelta(minutes=duration)
+            # 家里的充电按「家」收藏点定价：每度电 0.6 元（取电量口径）
+            used = round(kwh * 1.08, 2)
+            home_cost = round(0.6 * max(used, round(kwh, 2)), 2)
             charges.append(
                 (
-                    car_id, to_utc(start), to_utc(end), round(kwh, 2), round(kwh * 1.08, 2),
+                    car_id, to_utc(start), to_utc(end), round(kwh, 2), used,
                     start_soc, target_soc, duration,
                     round(rated_full * start_soc / 100, 2),
                     round(rated_full * target_soc / 100, 2),
                     seasonal_temp(day),
-                    round(kwh * (1.9 if is_fast else 0.48), 2),
+                    home_cost,
                     address_ids["home"],
+                    geofences["home"],
                 )
             )
             soc = target_soc
@@ -395,8 +410,8 @@ def main() -> None:
         INSERT INTO charging_processes (car_id, start_date, end_date, charge_energy_added,
                                         charge_energy_used, start_battery_level, end_battery_level,
                                         duration_min, start_rated_range_km, end_rated_range_km,
-                                        outside_temp_avg, cost, address_id)
-        VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+                                        outside_temp_avg, cost, address_id, geofence_id)
+        VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
         """,
         charges,
     )

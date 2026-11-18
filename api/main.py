@@ -122,6 +122,24 @@ app.add_middleware(
 # ------------------------------------------------------------------ 工具
 
 
+def _settings() -> dict:
+    """当前显示设置；读不到就退回公制默认值。"""
+    try:
+        current = queries.settings()
+    except Exception:  # noqa: BLE001 - 没授权 settings 表时退回默认值
+        current = {}
+    return {
+        "unit_of_length": current.get("unit_of_length") or "km",
+        "unit_of_temperature": current.get("unit_of_temperature") or "C",
+        "preferred_range": current.get("preferred_range") or "rated",
+        "unit_of_pressure": current.get("unit_of_pressure") or "bar",
+        "language": current.get("language") or "zh",
+        "theme_mode": current.get("theme_mode") or "system",
+        "base_url": current.get("base_url") or "",
+        "grafana_url": current.get("grafana_url") or "",
+    }
+
+
 def _num(value: Any, digits: int = 1) -> float | None:
     if value is None:
         return None
@@ -225,6 +243,8 @@ def _shape_charge(row: dict) -> dict:
         "address": _place(None, row.get("address")),
         "lat": _num(row.get("latitude"), 6),
         "lng": _num(row.get("longitude"), 6),
+        "geofence_id": row.get("geofence_id"),
+        "geofence_name": row.get("geofence_name"),
     }
 
 
@@ -256,6 +276,157 @@ def meta() -> dict:
             ],
             "range": queries.data_range(first) if first else {},
             "nominal_kwh": NOMINAL_KWH,
+            "settings": _settings(),
+            "settings_writable": db.writer_enabled(),
+        }
+    )
+
+
+@app.get("/api/settings")
+def get_settings() -> dict:
+    """显示设置：单位、续航口径、主题等，直接沿用 TeslaMate 的配置。"""
+    return _clean(
+        {
+            "settings": _settings(),
+            "writable": db.writer_enabled(),
+            "languages": [{"code": code, "label": label} for code, label in queries.SETTING_LANGUAGES],
+        }
+    )
+
+
+@app.put("/api/settings")
+def put_settings(payload: dict) -> dict:
+    """改设置并写回 TeslaMate 的 settings 表，看板与 TeslaMate 面板保持一致。
+
+    没配写账号时返回 503——看板保持只读，不偷偷降级。
+    """
+    if not db.writer_enabled():
+        raise HTTPException(503, "看板未配置写入账号，设置暂时只读")
+    values = payload.get("settings") if isinstance(payload, dict) else None
+    if not isinstance(values, dict):
+        raise HTTPException(400, "请求体需要包含 settings 对象")
+    try:
+        updated = queries.update_settings(values)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc))
+    except Exception as exc:  # noqa: BLE001 - 写库失败要给出可读的原因
+        logging.getLogger(__name__).exception("写入 settings 失败")
+        raise HTTPException(502, f"写入 TeslaMate 设置失败：{exc}")
+    return _clean({"settings": updated, "writable": True})
+
+
+def _shape_geofence(row: dict) -> dict:
+    """收藏点 + 它的充电统计。"""
+    charges = int(row.get("charges") or 0)
+    priced = int(row.get("priced_charges") or 0)
+    total_cost = _num(row.get("total_cost"), 2)
+    return {
+        "id": row["id"],
+        "name": row.get("name"),
+        "lat": _num(row.get("latitude"), 6),
+        "lng": _num(row.get("longitude"), 6),
+        "radius": row.get("radius"),
+        "cost_per_unit": _num(row.get("cost_per_unit"), 4),
+        "session_fee": _num(row.get("session_fee"), 2),
+        "billing_type": row.get("billing_type"),
+        "charges": charges,
+        "priced_charges": priced,
+        "unpriced_charges": max(charges - priced, 0),
+        "energy_added": _num(row.get("energy_added"), 2),
+        "energy_used": _num(row.get("energy_used"), 2),
+        "total_cost": total_cost,
+        "avg_cost": round(total_cost / priced, 2) if priced and total_cost else None,
+        "total_minutes": row.get("total_minutes"),
+        "last_charge_at": _iso(row.get("last_charge_at")),
+        "updated_at": _iso(row.get("updated_at")),
+    }
+
+
+@app.get("/api/geofences")
+def get_geofences() -> dict:
+    """收藏点（圈定范围 + 充电定价）及其统计。"""
+    return _clean(
+        {
+            "geofences": [_shape_geofence(row) for row in queries.geofences()],
+            "writable": db.writer_enabled(),
+        }
+    )
+
+
+@app.post("/api/geofences")
+def post_geofence(payload: dict) -> dict:
+    """新建收藏点。写回 geofences 表，TeslaMate 面板同步显示。"""
+    if not db.writer_enabled():
+        raise HTTPException(503, "看板未配置写入账号，暂时不能新建收藏点")
+    try:
+        row = queries.create_geofence(payload)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc))
+    except Exception as exc:  # noqa: BLE001
+        logging.getLogger(__name__).exception("新建收藏点失败")
+        raise HTTPException(502, f"写入收藏点失败：{exc}")
+    return _clean({"geofence": _shape_geofence(row)})
+
+
+@app.put("/api/geofences/{geofence_id}")
+def put_geofence(geofence_id: int, payload: dict) -> dict:
+    """改收藏点（半径、定价、位置、名称）。"""
+    if not db.writer_enabled():
+        raise HTTPException(503, "看板未配置写入账号，暂时不能修改收藏点")
+    try:
+        row = queries.update_geofence(geofence_id, payload)
+    except LookupError:
+        raise HTTPException(404, "收藏点不存在")
+    except ValueError as exc:
+        raise HTTPException(400, str(exc))
+    except Exception as exc:  # noqa: BLE001
+        logging.getLogger(__name__).exception("修改收藏点失败")
+        raise HTTPException(502, f"写入收藏点失败：{exc}")
+    return _clean({"geofence": _shape_geofence(row)})
+
+
+@app.delete("/api/geofences/{geofence_id}")
+def delete_geofence(geofence_id: int) -> dict:
+    """删收藏点。历史充电的费用保留，只是不再归属任何收藏点。"""
+    if not db.writer_enabled():
+        raise HTTPException(503, "看板未配置写入账号，暂时不能删除收藏点")
+    if queries.geofence(geofence_id) is None:
+        raise HTTPException(404, "收藏点不存在")
+    try:
+        queries.delete_geofence(geofence_id)
+    except Exception as exc:  # noqa: BLE001
+        logging.getLogger(__name__).exception("删除收藏点失败")
+        raise HTTPException(502, f"删除收藏点失败：{exc}")
+    return {"ok": True}
+
+
+@app.post("/api/geofences/{geofence_id}/recalculate")
+def recalculate_geofence(geofence_id: int, payload: dict) -> dict:
+    """按当前定价重算历史充电费用。
+
+    link_history=True 时先把圈内还没关联的充电关联到这个收藏点
+    （TeslaMate 只在写入充电时关联，新建收藏点不会回溯，这里补上）。
+    force=True 时连已经算过价的也一起重算。
+    """
+    if not db.writer_enabled():
+        raise HTTPException(503, "看板未配置写入账号，暂时不能重算费用")
+    if queries.geofence(geofence_id) is None:
+        raise HTTPException(404, "收藏点不存在")
+    link_history = bool(payload.get("link_history"))
+    force = bool(payload.get("force"))
+    linked = 0
+    try:
+        if link_history:
+            linked = queries.link_geofence_charges(geofence_id)
+        updated = queries.recalculate_geofence_costs(geofence_id, force=force)
+    except Exception as exc:  # noqa: BLE001
+        logging.getLogger(__name__).exception("重算充电费用失败")
+        raise HTTPException(502, f"重算费用失败：{exc}")
+    return _clean(
+        {
+            "linked": linked,
+            "updated": updated,
+            "still_unpriced": queries.unpriced_charges_in_geofence(geofence_id),
         }
     )
 
@@ -374,7 +545,9 @@ def timeline(car: int | None = None, days: int = Query(7, ge=1, le=30)) -> dict:
 @app.get("/api/overview")
 def overview(car: int | None = None) -> dict:
     vehicle = _resolve_car(car)
-    battery = queries.battery_bundle(vehicle["id"], NOMINAL_KWH)
+    battery = queries.battery_bundle(
+        vehicle["id"], NOMINAL_KWH, preferred_range=_settings()["preferred_range"]
+    )
     kwh_per_km = battery.get("kwh_per_km") or (
         float(vehicle["efficiency"]) if vehicle.get("efficiency") else None
     )
@@ -438,7 +611,9 @@ def drives(
     date_to: date | None = None,
 ) -> dict:
     vehicle = _resolve_car(car)
-    battery = queries.battery_bundle(vehicle["id"], NOMINAL_KWH)
+    battery = queries.battery_bundle(
+        vehicle["id"], NOMINAL_KWH, preferred_range=_settings()["preferred_range"]
+    )
     kwh_per_km = battery.get("kwh_per_km")
     rows = queries.drives(
         vehicle["id"], limit=limit, offset=offset, date_from=date_from, date_to=date_to
@@ -459,7 +634,9 @@ def drive_detail(drive_id: int, car: int | None = None) -> dict:
     row = queries.drive(vehicle["id"], drive_id)
     if row is None:
         raise HTTPException(404, "行程不存在")
-    battery = queries.battery_bundle(vehicle["id"], NOMINAL_KWH)
+    battery = queries.battery_bundle(
+        vehicle["id"], NOMINAL_KWH, preferred_range=_settings()["preferred_range"]
+    )
     series = queries.drive_positions(drive_id)
     return _clean(
         {
@@ -485,7 +662,11 @@ def drive_detail(drive_id: int, car: int | None = None) -> dict:
 @app.get("/api/battery")
 def battery(car: int | None = None) -> dict:
     vehicle = _resolve_car(car)
-    return _clean(queries.battery_bundle(vehicle["id"], NOMINAL_KWH))
+    return _clean(
+        queries.battery_bundle(
+            vehicle["id"], NOMINAL_KWH, preferred_range=_settings()["preferred_range"]
+        )
+    )
 
 
 @app.get("/api/charges")

@@ -69,10 +69,14 @@ def estimate_capacity(
     return sorted(out, key=lambda s: s.when)
 
 
-def estimate_range(rows: list[dict], *, min_end_soc: int = 50) -> list[RangeSample]:
+def estimate_range(
+    rows: list[dict], *, min_end_soc: int = 50, preferred: str = "rated"
+) -> list[RangeSample]:
+    """按额定 / 理想续航折算满电续航，口径跟 TeslaMate 的设置一致。"""
+    column = "end_ideal_range_km" if preferred == "ideal" else "end_rated_range_km"
     out: list[RangeSample] = []
     for row in rows:
-        km = _float(row.get("end_rated_range_km"))
+        km = _float(row.get(column))
         end = row.get("end_battery_level")
         when = row.get("end_date") or row.get("start_date")
         if km is None or end is None or when is None or end < min_end_soc:

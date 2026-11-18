@@ -11,7 +11,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
-from api import main  # noqa: E402
+from api import main, queries  # noqa: E402
 
 
 def drive_row(**overrides) -> dict:
@@ -93,6 +93,63 @@ class ChargeShapeTest(unittest.TestCase):
         shaped = main._shape_charge(charge_row(latitude=None, longitude=None))
         self.assertIsNone(shaped["lat"])
         self.assertIsNone(shaped["lng"])
+
+
+class GeofenceValidationTest(unittest.TestCase):
+    """收藏点字段校验：纯函数，不连库。"""
+
+    def test_accepts_lat_lng_alias(self) -> None:
+        params = queries._validate_geofence(
+            {
+                "name": "家",
+                "lat": 39.91788,
+                "lng": 116.27738,
+                "radius": 100,
+                "billing_type": "per_kwh",
+                "cost_per_unit": 0.6,
+            }
+        )
+        self.assertAlmostEqual(params["latitude"], 39.91788)
+        self.assertAlmostEqual(params["longitude"], 116.27738)
+        self.assertEqual(params["radius"], 100)
+        self.assertEqual(params["billing_type"], "per_kwh")
+
+    def test_accepts_database_column_names(self) -> None:
+        params = queries._validate_geofence(
+            {
+                "name": "公司",
+                "latitude": 39.78,
+                "longitude": 116.55,
+                "radius": 200,
+                "billing_type": "per_minute",
+                "cost_per_unit": 0.05,
+                "session_fee": 5,
+            }
+        )
+        self.assertAlmostEqual(params["latitude"], 39.78)
+        self.assertEqual(params["billing_type"], "per_minute")
+
+    def test_rejects_bad_values(self) -> None:
+        base = {
+            "name": "x",
+            "lat": 39.9,
+            "lng": 116.2,
+            "radius": 100,
+            "billing_type": "per_kwh",
+            "cost_per_unit": 0.6,
+        }
+        with self.assertRaises(ValueError):
+            queries._validate_geofence({**base, "name": "  "})
+        with self.assertRaises(ValueError):
+            queries._validate_geofence({**base, "lat": 999})
+        with self.assertRaises(ValueError):
+            queries._validate_geofence({**base, "radius": 0})
+        with self.assertRaises(ValueError):
+            queries._validate_geofence({**base, "billing_type": "per_second"})
+        with self.assertRaises(ValueError):
+            queries._validate_geofence({**base, "cost_per_unit": -1})
+        with self.assertRaises(ValueError):
+            queries._validate_geofence({**base, "cost_per_unit": None, "session_fee": None})
 
 
 if __name__ == "__main__":

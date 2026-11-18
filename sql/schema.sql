@@ -43,13 +43,17 @@ CREATE TABLE IF NOT EXISTS addresses (
 );
 
 CREATE TABLE IF NOT EXISTS geofences (
-    id          bigserial PRIMARY KEY,
-    name        text,
-    latitude    numeric,
-    longitude   numeric,
-    radius      integer,
-    inserted_at timestamp,
-    updated_at  timestamp
+    id            bigserial PRIMARY KEY,
+    name          text,
+    latitude      numeric,
+    longitude     numeric,
+    radius        integer,
+    -- 收藏点的定价：单价 + 服务费 + 计费方式（每度电 / 每分钟）
+    cost_per_unit numeric(9,4),
+    session_fee   numeric(14,2),
+    billing_type  text NOT NULL DEFAULT 'per_kwh',
+    inserted_at   timestamp,
+    updated_at    timestamp
 );
 
 CREATE TABLE IF NOT EXISTS positions (
