@@ -3,6 +3,7 @@ import { api } from "../api";
 import type { Overview as OverviewData, TimelineData } from "../types";
 import { Empty, ErrorBox, Loading, Panel } from "../components/Panel";
 import { CalendarHeatmap } from "../components/CalendarHeatmap";
+import { DriveModal } from "../components/DriveModal";
 import { StateTimeline } from "../components/StateTimeline";
 import { HoverMap } from "../components/MiniMap";
 import { dateTime, delta, duration, km, n, pct, timeOfDay, consumption, distance, distanceUnit } from "../lib/format";
@@ -41,6 +42,8 @@ export function Overview({ carId, onNavigate }: Props) {
   const [error, setError] = useState<string | null>(null);
   const [timeline, setTimeline] = useState<TimelineData | null>(null);
   const [timelineError, setTimelineError] = useState(false);
+  /** 打开行程详情弹框的行程 id，和「行程」页用的是同一个弹框。 */
+  const [openDriveId, setOpenDriveId] = useState<number | null>(null);
 
   useEffect(() => {
     let alive = true;
@@ -168,7 +171,7 @@ export function Overview({ carId, onNavigate }: Props) {
       <div className="grid gap-3.5 lg:grid-cols-[1.55fr_1fr]">
         <Panel
           title="最近行程"
-          hint="点击「行程」查看曲线"
+          hint="点击行查看速度 / 功率曲线"
           action={
             <button
               type="button"
@@ -200,7 +203,12 @@ export function Overview({ carId, onNavigate }: Props) {
                 </thead>
                 <tbody>
                   {data.recent_drives.map((drive) => (
-                    <tr key={drive.id} className="border-b border-line-soft last:border-0 hover:bg-hover">
+                    <tr
+                      key={drive.id}
+                      onClick={() => setOpenDriveId(drive.id)}
+                      title="点击查看这次行程的曲线"
+                      className="cursor-pointer border-b border-line-soft last:border-0 hover:bg-hover"
+                    >
                       <td className="px-3 py-2.5 sm:px-4">
                         <div className="flex items-center gap-1.5 text-[13px]">
                           <span className="max-w-[130px] truncate">{drive.from}</span>
@@ -287,6 +295,18 @@ export function Overview({ carId, onNavigate }: Props) {
           )}
         </Panel>
       </div>
+
+      {openDriveId !== null && (
+        <DriveModal
+          id={openDriveId}
+          carId={carId}
+          onClose={() => setOpenDriveId(null)}
+          onViewAll={() => {
+            setOpenDriveId(null);
+            onNavigate("drives");
+          }}
+        />
+      )}
     </div>
   );
 }

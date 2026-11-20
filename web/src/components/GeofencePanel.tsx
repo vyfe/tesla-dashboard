@@ -81,7 +81,7 @@ function GeofenceMap({ geofences }: { geofences: Geofence[] }) {
         .addTo(layer);
     }
     if (points.length) {
-      map.fitBounds(L.latLngBounds(points).pad(0.6), { animate: false });
+      map.fitBounds(leaflet.latLngBounds(points).pad(0.6), { animate: false });
     }
     return () => {
       map.removeLayer(layer);
